@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "py-hsbi-timetable-2-0"
+version = "0.1.0"
+description = "HSBI Timetable PDF to Google Calendar converter."
+authors = ["Max Uhsadel"]
+readme = "README.md"
+packages = [{include = "py"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+pymupdf = "^1.24.10"
+pypdf-table-extraction = "^0.0.1"
+opencv-python = "^4.10.0.84"
+pyyaml = "^6.0.2"
+google-api-python-client = "^2.147.0"
+google-auth-oauthlib = "^1.2.1"
+openai = "^1.50.2"
+webdavclient3 = "^3.14.6"
+pytz = "^2024.2"
+pypdf2 = "^3.0.1"
+ghostscript = "^0.7"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

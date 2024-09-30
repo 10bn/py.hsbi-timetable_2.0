@@ -1,0 +1,12 @@
+PyMuPDF
+pandas==1.5.3
+pypdf-table-extraction
+opencv-python
+PyYAML
+google-api-python-client
+google-auth-oauthlib
+openai
+webdavclient3
+pytz
+PyPDF2
+ghostscript

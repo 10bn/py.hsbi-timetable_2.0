@@ -1,0 +1,53 @@
+# ================================================
+# config.yaml
+# 
+# This file contains configuration data
+# such as API keys, credentials, and URLs required
+# for the timetable_scraper project.
+# 
+# =================================================
+
+# --------------------------------------------
+# OpenAI API Configuration
+# --------------------------------------------
+# OpenAI API key for parsing timetable event details.
+# Obtain your API key from https://platform.openai.com/account/api-keys
+api_key: ""
+
+
+
+# Time zone setting for Google Calendar events.
+# Format: Region/City (e.g., "Europe/Berlin")
+time_zone: "Europe/Berlin"
+
+# Dry run mode flag.
+# - true: Simulate actions without making actual changes.
+# - false: Perform real updates to Google Calendar.
+dry_run: false
+
+# --------------------------------------------
+# WebDAV Configuration
+# --------------------------------------------
+# Credentials for accessing the WebDAV server used to sync timetables.
+credentials:
+  username: ""  # Replace with your WebDAV username
+  password: ""  # Replace with your WebDAV password
+
+# --------------------------------------------
+# Google Calendar Configuration
+# --------------------------------------------
+# Google Calendar ID where events will be synchronized.
+# You can find your Calendar ID in Google Calendar settings.
+calendars:
+  calendar_1: "your_google_calendar_id_here"
+  calendar_2: "your_google_calendar_id_here"
+  
+# URLs for accessing resources on the WebDAV server.
+urls:
+  timetable_1: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+  timetable_2: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+
+# Keywords associated with each timetable.
+keywords:
+  timetable_1: "ELM 3"
+  timetable_2: "ELM 5"

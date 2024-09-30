@@ -1,0 +1,7 @@
+# Gitignore
+config/client_secret.json
+config/token.json
+config/config.yaml
+
+downloads/
+output/

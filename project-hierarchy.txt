@@ -1,0 +1,31 @@
+py.hsbi-timetable_2.0
+├─ .DS_Store
+├─ .devcontainer
+│  ├─ Dockerfile
+│  ├─ devcontainer.json
+│  └─ setup_github_auth.sh
+├─ .gitignore
+├─ .vscode
+│  └─ settings.json
+├─ config
+│  ├─ client_secret.json
+│  ├─ config-sample.yaml
+│  ├─ config.yaml
+│  └─ token.json
+├─ readme.md
+├─ requirements.txt
+├─ ruff.toml
+└─ src
+   ├─ .DS_Store
+   ├─ libs
+   │  ├─ __init__.py
+   │  ├─ camelot_pdf_to_df.py
+   │  ├─ download_webdav_timetables.py
+   │  ├─ get_timetable_ver.py
+   │  ├─ helper_functions.py
+   │  ├─ log_config.py
+   │  ├─ openai_parser.py
+   │  ├─ process_raw_df.py
+   │  ├─ tempCodeRunnerFile.py
+   │  └─ update_timetable_google_api.py
+   └─ main.py
