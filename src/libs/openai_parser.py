@@ -4,8 +4,8 @@ import json
 import logging
 import os
 from openai import OpenAI
-from timetable_scraper.libs.helper_functions import load_config
-from timetable_scraper.libs.log_config import setup_logger
+from helper_functions import load_config
+from log_config import setup_logger
 
 # Set up the logger
 setup_logger()

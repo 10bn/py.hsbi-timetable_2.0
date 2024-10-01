@@ -2,9 +2,9 @@ import logging
 import os
 import camelot
 import pandas as pd
-from timetable_scraper.libs.get_timetable_ver import extract_version
-from timetable_scraper.libs.helper_functions import save_to_csv
-from timetable_scraper.libs.log_config import setup_logger
+from get_timetable_ver import extract_version
+from helper_functions import save_to_csv
+from log_config import setup_logger
 
 setup_logger()
 logger = logging.getLogger(__name__)
