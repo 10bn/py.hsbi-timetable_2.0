@@ -1,5 +1,5 @@
-# Use the official Python 3.12.0 slim image as the base
-FROM python:3.12.0-slim
+# Use the official Python 3.11.0 slim image as the base
+FROM python:3.11-slim
 
 # Set environment variables to prevent Python from writing pyc files and buffer outputs
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -21,7 +21,8 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip globally as root
-RUN pip install --upgrade pip
+RUN pip install --upgrade pip setuptools wheel
+
 
 # Set the working directory
 WORKDIR /workspace
