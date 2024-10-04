@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "HSBI Timetable PDF to Google Calendar converter."
 authors = ["Max Uhsadel"]
 readme = "README.md"
-packages = [{include = "py"}]
+packages = [{include = "libs", from = "src"}]
+
+[tool.poetry.scripts]
+py-hsbi-timetable = "src.main:main"
+
 
 [tool.poetry.dependencies]
 python = "^3.11"

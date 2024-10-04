@@ -1,11 +1,9 @@
-# src/libs/timetable_version.py
-
 import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Union
 import logging
-import fitz 
+import fitz
 from logger import setup_logger
 
 
@@ -13,7 +11,9 @@ setup_logger()
 logger = logging.getLogger(__name__)
 
 
-def extract_version(pdf_path: str, return_timestamp: bool = True) -> Optional[Union[float, str]]:
+def extract_version(
+    pdf_path: str, return_timestamp: bool = True
+) -> Optional[Union[float, str]]:
     """
     Extract the version date and time from the first page of a PDF.
 
@@ -60,7 +60,9 @@ def extract_version(pdf_path: str, return_timestamp: bool = True) -> Optional[Un
 
                 # Parse the combined string into a datetime object
                 version_datetime = datetime.strptime(version_str, "%d.%m.%Y %H:%M")
-                logger.info(f"Extracted version from '{pdf_file.name}': {version_datetime}")
+                logger.info(
+                    f"Extracted version from '{pdf_file.name}': {version_datetime}"
+                )
 
                 if return_timestamp:
                     # Return as Unix timestamp
@@ -73,14 +75,16 @@ def extract_version(pdf_path: str, return_timestamp: bool = True) -> Optional[Un
                 return None
 
     except Exception as e:
-        logger.error(f"An error occurred while extracting version from '{pdf_file.name}': {e}")
+        logger.error(
+            f"An error occurred while extracting version from '{pdf_file.name}': {e}"
+        )
         return None
 
 
 if __name__ == "__main__":
     # Example usage of the extract_version function
     pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
-    
+
     # Set to True for timestamp, False for human-readable format
     return_as_timestamp = False
 

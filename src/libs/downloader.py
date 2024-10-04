@@ -1,5 +1,3 @@
-# src/libs/webdav_downloader.py
-
 import logging
 import os
 from typing import Dict, List
@@ -18,6 +16,7 @@ logger = logging.getLogger(__name__)
 # WebDAV Downloader Class
 # ================================
 
+
 class WebDAVDownloader:
     """
     A class to handle downloading files from multiple WebDAV servers based on specified keywords.
@@ -29,7 +28,7 @@ class WebDAVDownloader:
         credentials: Dict[str, str],
         keywords: Dict[str, str],
         dry_run: bool = False,
-        output_path: str = "./downloads/"
+        output_path: str = "./downloads/",
     ):
         """
         Initialize the WebDAVDownloader.
@@ -49,7 +48,9 @@ class WebDAVDownloader:
 
         # Ensure the base output directory exists
         os.makedirs(self.output_path, exist_ok=True)
-        logger.debug(f"Initialized WebDAVDownloader with output directory: {self.output_path}")
+        logger.debug(
+            f"Initialized WebDAVDownloader with output directory: {self.output_path}"
+        )
 
     def initialize_client(self, url: str, key: str) -> Client:
         """
@@ -103,7 +104,9 @@ class WebDAVDownloader:
             logger.error(f"Failed to list files for '{key}': {e}")
             raise
 
-    def download_file(self, client: Client, remote_path: str, local_path: str, key: str) -> None:
+    def download_file(
+        self, client: Client, remote_path: str, local_path: str, key: str
+    ) -> None:
         """
         Download a single file from the WebDAV server.
 
@@ -117,7 +120,9 @@ class WebDAVDownloader:
             Exception: If downloading the file fails.
         """
         if self.dry_run:
-            logger.info(f"Dry run enabled. Skipping download of '{remote_path}' to '{local_path}'.")
+            logger.info(
+                f"Dry run enabled. Skipping download of '{remote_path}' to '{local_path}'."
+            )
             return
 
         try:
@@ -145,7 +150,9 @@ class WebDAVDownloader:
 
         keyword = keyword.lower()
         if not keyword:
-            logger.warning(f"No keyword provided for '{key}'. All PDF files will be downloaded.")
+            logger.warning(
+                f"No keyword provided for '{key}'. All PDF files will be downloaded."
+            )
 
         try:
             client = self.initialize_client(url, key)
@@ -200,6 +207,7 @@ class WebDAVDownloader:
 # Main Execution Function
 # ================================
 
+
 def main():
     """
     Main execution function.
@@ -207,25 +215,27 @@ def main():
     try:
         # Load the configuration
         config = load_config("config/config.yaml")
-        urls = config.get('urls')
-        credentials = config.get('credentials')
-        keywords = config.get('keywords', {})  # Default to empty dict if not provided
-        dry_run = config.get('dry_run', False)
-        output_path = config.get('output_path', "./downloads/")
+        urls = config.get("urls")
+        credentials = config.get("credentials")
+        keywords = config.get("keywords", {})  # Default to empty dict if not provided
+        dry_run = config.get("dry_run", False)
+        output_path = config.get("output_path", "./downloads/")
 
         if not urls or not credentials:
             logger.error("Configuration must include 'urls' and 'credentials'.")
             exit(1)
 
         if not keywords:
-            logger.warning("No keywords provided. All PDF files from all URLs will be downloaded.")
+            logger.warning(
+                "No keywords provided. All PDF files from all URLs will be downloaded."
+            )
 
         downloader = WebDAVDownloader(
             urls=urls,
             credentials=credentials,
             keywords=keywords,
             dry_run=dry_run,
-            output_path=output_path
+            output_path=output_path,
         )
         downloader.run()
 

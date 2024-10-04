@@ -1,0 +1,1374 @@
+# src/main.py
+import logging
+import os
+from libs.downloader import WebDAVDownloader
+from libs.parser import PdfParser
+from libs.update_google_calendar import GoogleCalendarAPI
+
+from libs.utils import load_config, save_events_to_json
+
+# Setup logger
+from libs.logger import setup_logger
+
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+def download_pdfs(timetables, credentials, download_dir, dry_run):
+    """Downloads the PDFs using WebDAVDownloader for each timetable."""
+    for timetable_key, timetable_data in timetables.items():
+        downloader = WebDAVDownloader(
+            urls={timetable_key: timetable_data["url"]},
+            credentials=credentials,
+            keywords={timetable_key: timetable_data["keyword"]},
+            dry_run=dry_run,
+            output_path=os.path.join(download_dir, timetable_key),
+        )
+        downloader.run()
+
+
+def parse_pdf(timetable_key, pdf_path, api_key, output_dir):
+    """Processes the PDF using PdfParser and saves structured events to a JSON file."""
+    parser = PdfParser(
+        api_key=api_key, output_dir=os.path.join(output_dir, timetable_key)
+    )
+    df = parser.parse_pdf(pdf_path, save_raw=False, save_csv_events=True)
+    if df is not None:
+        # Save the parsed events as JSON
+        json_output_path = os.path.join(
+            output_dir, timetable_key, f"{timetable_key}_events.json"
+        )
+        save_events_to_json(df, json_output_path)
+    return df
+
+
+def update_google_calendar(df, token_json_file, credentials_json_file, time_zone):
+    """Updates the Google Calendar with the parsed events."""
+    calendar_api = GoogleCalendarAPI(
+        token_json_file=token_json_file,
+        credentials_json_file=credentials_json_file,
+        time_zone=time_zone,
+    )
+    calendar_api.update_calendar(df)
+
+
+def main():
+    """Main execution function."""
+    # Step 1: Load configuration
+    config = load_config("config/config.yaml")
+    api_key = config["openai"]["api_key"]
+    timetables = config["webdav"]["timetables"]
+    credentials = config["webdav"]["credentials"]
+    token_json_file = config["google_calendar"]["auth"]["token_json_file"]
+    credentials_json_file = config["google_calendar"]["auth"]["credentials_json_file"]
+    time_zone = config["google_calendar"]["time_zone"]
+    download_dir = config["output"]["download_dir"]
+    output_dir = config["output"]["output_dir"]
+    dry_run = config["general"]["dry_run"]
+
+    # Step 3: Download the PDFs from WebDAV servers
+    download_pdfs(timetables, credentials, download_dir, dry_run)
+
+
+if __name__ == "__main__":
+    main()
+
+
+# src/libs/downloader.py
+import logging
+import os
+from typing import Dict, List
+
+from webdav3.client import Client
+
+from utils import load_config
+from logger import setup_logger
+
+# Setup logging
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+# ================================
+# WebDAV Downloader Class
+# ================================
+
+
+class WebDAVDownloader:
+    """
+    A class to handle downloading files from multiple WebDAV servers based on specified keywords.
+    """
+
+    def __init__(
+        self,
+        urls: Dict[str, str],
+        credentials: Dict[str, str],
+        keywords: Dict[str, str],
+        dry_run: bool = False,
+        output_path: str = "./downloads/",
+    ):
+        """
+        Initialize the WebDAVDownloader.
+
+        Args:
+            urls (Dict[str, str]): A dictionary where keys are identifiers and values are WebDAV URLs.
+            credentials (Dict[str, str]): A dictionary containing 'username' and 'password'.
+            keywords (Dict[str, str]): A dictionary mapping each URL identifier to a keyword.
+            dry_run (bool, optional): If True, simulate actions without performing downloads. Defaults to False.
+            output_path (str, optional): Base directory to download files into. Defaults to "./downloads/".
+        """
+        self.urls = urls
+        self.credentials = credentials
+        self.keywords = keywords
+        self.dry_run = dry_run
+        self.output_path = output_path
+
+        # Ensure the base output directory exists
+        os.makedirs(self.output_path, exist_ok=True)
+        logger.debug(
+            f"Initialized WebDAVDownloader with output directory: {self.output_path}"
+        )
+
+    def initialize_client(self, url: str, key: str) -> Client:
+        """
+        Initialize a WebDAV client.
+
+        Args:
+            url (str): WebDAV URL.
+            key (str): Identifier for logging purposes.
+
+        Returns:
+            Client: Configured WebDAV client.
+
+        Raises:
+            Exception: If client initialization fails.
+        """
+        options = {
+            "webdav_hostname": url,
+            "webdav_login": self.credentials.get("username"),
+            "webdav_password": self.credentials.get("password"),
+            "verbose": True,
+        }
+
+        try:
+            client = Client(options)
+            client.verify = True  # Set to False to skip SSL verification if needed
+            logger.debug(f"Initialized WebDAV client for '{key}'")
+            return client
+        except Exception as e:
+            logger.error(f"Failed to initialize WebDAV client for '{key}': {e}")
+            raise
+
+    def list_files(self, client: Client, key: str) -> List[str]:
+        """
+        Retrieve a list of files from the WebDAV server.
+
+        Args:
+            client (Client): Configured WebDAV client.
+            key (str): Identifier for logging purposes.
+
+        Returns:
+            List[str]: List of file paths.
+
+        Raises:
+            Exception: If listing files fails.
+        """
+        try:
+            files = client.list()
+            logger.info(f"Retrieved {len(files)} files from '{key}'")
+            return files
+        except Exception as e:
+            logger.error(f"Failed to list files for '{key}': {e}")
+            raise
+
+    def download_file(
+        self, client: Client, remote_path: str, local_path: str, key: str
+    ) -> None:
+        """
+        Download a single file from the WebDAV server.
+
+        Args:
+            client (Client): Configured WebDAV client.
+            remote_path (str): Path to the remote file.
+            local_path (str): Path where the file will be saved locally.
+            key (str): Identifier for logging purposes.
+
+        Raises:
+            Exception: If downloading the file fails.
+        """
+        if self.dry_run:
+            logger.info(
+                f"Dry run enabled. Skipping download of '{remote_path}' to '{local_path}'."
+            )
+            return
+
+        try:
+            os.makedirs(os.path.dirname(local_path), exist_ok=True)
+            client.download_sync(remote_path=remote_path, local_path=local_path)
+            logger.info(f"Successfully downloaded '{remote_path}' to '{local_path}'")
+        except Exception as e:
+            logger.error(f"Failed to download file '{remote_path}' from '{key}': {e}")
+            raise
+
+    def process_url(self, key: str, url: str, keyword: str) -> None:
+        """
+        Process a single WebDAV URL: list files and download relevant PDFs based on the keyword.
+
+        Args:
+            key (str): Identifier for the URL.
+            url (str): WebDAV URL.
+            keyword (str): Keyword to filter PDF files.
+        """
+        logger.info(f"Processing URL for '{key}': {url}")
+
+        if not isinstance(keyword, str):
+            logger.error(f"Keyword for '{key}' must be a string.")
+            return
+
+        keyword = keyword.lower()
+        if not keyword:
+            logger.warning(
+                f"No keyword provided for '{key}'. All PDF files will be downloaded."
+            )
+
+        try:
+            client = self.initialize_client(url, key)
+        except Exception:
+            return
+
+        download_dir = os.path.join(self.output_path, key)
+        os.makedirs(download_dir, exist_ok=True)
+        logger.info(f"Download directory for '{key}': {download_dir}")
+
+        try:
+            files = self.list_files(client, key)
+        except Exception:
+            return
+
+        for file in files:
+            logger.debug(f"Found file: {file}")
+
+        for file in files:
+            file_lower = file.lower()
+            is_pdf = file_lower.endswith(".pdf")
+            contains_keyword = keyword in file_lower if keyword else False
+
+            if is_pdf and (contains_keyword or not keyword):
+                logger.info(f"Attempting to download file: {file}")
+                local_filename = os.path.basename(file)
+                local_path = os.path.join(download_dir, local_filename)
+                try:
+                    self.download_file(client, file, local_path, key)
+                except Exception:
+                    continue
+            else:
+                if is_pdf:
+                    logger.info(f"Skipped PDF file (keyword not found): {file}")
+                else:
+                    logger.info(f"Skipped non-PDF file: {file}")
+
+    def run(self) -> None:
+        """
+        Execute the download process for all configured URLs.
+        """
+        logger.info("Starting the WebDAV download process.")
+
+        for key, url in self.urls.items():
+            keyword = self.keywords.get(key, "")
+            self.process_url(key, url, keyword)
+
+        logger.info("Finished downloading timetables.")
+
+
+# ================================
+# Main Execution Function
+# ================================
+
+
+def main():
+    """
+    Main execution function.
+    """
+    try:
+        # Load the configuration
+        config = load_config("config/config.yaml")
+        urls = config.get("urls")
+        credentials = config.get("credentials")
+        keywords = config.get("keywords", {})  # Default to empty dict if not provided
+        dry_run = config.get("dry_run", False)
+        output_path = config.get("output_path", "./downloads/")
+
+        if not urls or not credentials:
+            logger.error("Configuration must include 'urls' and 'credentials'.")
+            exit(1)
+
+        if not keywords:
+            logger.warning(
+                "No keywords provided. All PDF files from all URLs will be downloaded."
+            )
+
+        downloader = WebDAVDownloader(
+            urls=urls,
+            credentials=credentials,
+            keywords=keywords,
+            dry_run=dry_run,
+            output_path=output_path,
+        )
+        downloader.run()
+
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred: {e}")
+
+
+if __name__ == "__main__":
+    main()
+
+
+# src/libs/__init__.py
+
+
+# src/libs/logger.py
+import logging
+
+
+def setup_logger():
+    # Get the root logger
+    logger = logging.getLogger()
+
+    # Configure the basic logging settings only if not already configured
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(filename)s - %(message)s (%(lineno)d)",
+    )
+    # Create a file handler to write logs to a file
+    file_handler = logging.FileHandler("logfile.log")
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(filename)s - %(message)s (%(lineno)d)"
+    )
+    file_handler.setFormatter(formatter)
+    # Add the file handler to the logger
+    logger.addHandler(file_handler)
+
+
+# src/libs/parser.py
+import json
+import logging
+import os
+
+import camelot
+import pandas as pd
+from openai import OpenAI
+
+from logger import setup_logger
+from timetable_version import extract_version
+from utils import save_to_csv, load_config
+# Setup logging
+setup_logger()
+logger = logging.getLogger(__name__)
+
+# ================================
+# PDF Parsing Functions
+# ================================
+
+def extract_tables(pdf_path):
+    """
+    Extract tables from a PDF using Camelot.
+
+    Args:
+        pdf_path (str): Path to the PDF file.
+
+    Returns:
+        list or None: List of extracted tables or None if extraction fails.
+    """
+    try:
+        logger.info(f"Starting to extract tables from: {pdf_path}")
+        table_list = camelot.read_pdf(pdf_path, flavor="lattice", pages="all")
+        logger.info(f"Successfully extracted {len(table_list)} tables.")
+        return table_list
+    except Exception as e:
+        logger.error(f"Failed to extract tables: {e}")
+        return None
+
+
+def save_raw_tables(table_list, output_dir):
+    """
+    Save raw tables extracted from PDF to CSV files.
+
+    Args:
+        table_list (list): List of tables extracted by Camelot.
+        output_dir (str): Directory to save the raw CSV files.
+    """
+    try:
+        if not table_list:
+            logger.warning("No tables to save.")
+            return
+
+        raw_output_dir = os.path.join(output_dir, "raw_tables")
+        os.makedirs(raw_output_dir, exist_ok=True)
+        logger.info(f"Saving raw tables to directory: {raw_output_dir}")
+
+        for idx, table in enumerate(table_list, start=1):
+            table_filename = os.path.join(raw_output_dir, f"raw_table_{idx}.csv")
+            table.to_csv(table_filename, index=False)
+            logger.debug(f"Saved raw table {idx} to {table_filename}")
+
+        logger.info(f"Successfully saved {len(table_list)} raw tables.")
+    except Exception as e:
+        logger.error(f"Failed to save raw tables: {e}")
+
+
+def convert_tablelist_to_dataframe(table_list):
+    """
+    Convert a list of Camelot tables to a single pandas DataFrame.
+
+    Args:
+        table_list (list): List of tables extracted by Camelot.
+
+    Returns:
+        pd.DataFrame: Combined DataFrame from all tables.
+    """
+    try:
+        dataframes = [
+            table.df if i == 0 else table.df.iloc[1:]
+            for i, table in enumerate(table_list)
+        ]
+        df_final = pd.concat(dataframes, ignore_index=True)
+        new_header = df_final.iloc[0]
+        df_final = df_final[1:]
+        df_final.columns = new_header
+        df_final.drop(df_final.columns[0], axis=1, inplace=True)
+        df_final.rename(columns={df_final.columns[0]: "date"}, inplace=True)
+
+        logger.debug(f"Converted tables to DataFrame with shape: {df_final.shape}")
+        return df_final
+    except Exception as e:
+        logger.error(f"Error converting table list to DataFrame: {e}")
+        return pd.DataFrame()
+
+
+def melt_df(df):
+    """
+    Melt the DataFrame to have 'date', 'time_slot', and 'raw_details' columns.
+
+    Args:
+        df (pd.DataFrame): DataFrame to melt.
+
+    Returns:
+        pd.DataFrame: Melted DataFrame.
+    """
+    try:
+        df = df.melt(id_vars=["date"], var_name="time_slot", value_name="raw_details")
+        logger.debug(f"DataFrame after melting has shape: {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error melting DataFrame: {e}")
+        return pd.DataFrame()
+
+
+def forward_fill_dates(df):
+    """
+    Forward fill missing dates in the DataFrame.
+
+    Args:
+        df (pd.DataFrame): DataFrame with potential missing dates.
+
+    Returns:
+        pd.DataFrame: DataFrame with forward-filled dates.
+    """
+    df['date'] = df['date'].fillna(method='ffill')
+    logger.debug("Forward filled missing dates.")
+    return df
+
+
+def clean_special_chars(df):
+    """
+    Clean special characters in the entire DataFrame.
+
+    Args:
+        df (pd.DataFrame): DataFrame to clean.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame.
+    """
+    try:
+        df = df.applymap(lambda x: x.replace('\xa0', ' ') if isinstance(x, str) else x)
+        df = df.applymap(lambda x: x.replace('‐', '-') if isinstance(x, str) else x)
+        logger.info("Special characters cleaned successfully.")
+    except Exception as e:
+        logger.error(f"Error cleaning special characters: {e}")
+    return df
+
+
+def clean_time_slot(df):
+    """
+    Clean the 'time_slot' column by removing ' Uhr'.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing the 'time_slot' column.
+
+    Returns:
+        pd.DataFrame: DataFrame with cleaned 'time_slot'.
+    """
+    if "time_slot" in df.columns:
+        df["time_slot"] = df["time_slot"].str.replace(" Uhr", "", regex=False)
+        logger.debug("Cleaned 'time_slot' column.")
+    return df
+
+
+def split_time_slot(df):
+    """
+    Split the 'time_slot' column into 'start_time' and 'end_time'.
+
+    Args:
+        df (pd.DataFrame): DataFrame containing the 'time_slot' column.
+
+    Returns:
+        pd.DataFrame: DataFrame with 'start_time' and 'end_time' columns.
+    """
+    if "time_slot" in df.columns:
+        logger.info("Splitting 'time_slot' column into 'start_time' and 'end_time'.")
+        try:
+            df["time_slot"] = df["time_slot"].str.replace(" Uhr", "", regex=False)
+            logger.debug(f"Cleaned time_slot values: {df['time_slot'].head()}")
+
+            time_splits = df["time_slot"].str.split(pat=" - ", n=1, expand=True)
+
+            if time_splits.shape[1] < 2:
+                logger.warning("Some 'time_slot' entries do not have an end time. Filling with NaT.")
+                time_splits[1] = pd.NA
+
+            df["start_time"] = pd.to_datetime(
+                time_splits[0].str.strip(), format="%H.%M", errors="coerce"
+            ).dt.time
+            df["end_time"] = pd.to_datetime(
+                time_splits[1].str.strip(), format="%H.%M", errors="coerce"
+            ).dt.time
+
+            if df["start_time"].isna().any():
+                problematic_slots = df[df["start_time"].isna()]["time_slot"]
+                logger.warning(f"Failed to parse 'start_time' for some entries: {problematic_slots.tolist()}")
+
+            if df["end_time"].isna().any():
+                problematic_slots = df[df["end_time"].isna()]["time_slot"]
+                logger.warning(f"Failed to parse 'end_time' for some entries: {problematic_slots.tolist()}")
+
+            idx = df.columns.get_loc("time_slot")
+            df.insert(idx, "start_time", df.pop("start_time"))
+            df.insert(idx + 1, "end_time", df.pop("end_time"))
+            df.drop("time_slot", axis=1, inplace=True)
+
+            logger.info("Successfully replaced 'time_slot' with 'start_time' and 'end_time'.")
+        except Exception as e:
+            logger.error(f"Error processing 'time_slot': {e}")
+            logger.debug(f"Current time_slot values (post-error): {df['time_slot'].head()}")
+    else:
+        logger.warning("The column 'time_slot' does not exist in the DataFrame. No action taken.")
+    return df
+
+
+def format_date(df, current_year):
+    """
+    Format the 'date' column by replacing month names and adding the year.
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'date' column.
+        current_year (int): Year to append to the dates.
+
+    Returns:
+        pd.DataFrame: DataFrame with formatted 'date' column.
+    """
+    month_mapping = {
+        "Jan": "Jan",
+        "Feb": "Feb",
+        "Mär": "Mar",
+        "Apr": "Apr",
+        "Mai": "May",
+        "Jun": "Jun",
+        "Jul": "Jul",
+        "Aug": "Aug",
+        "Sep": "Sep",
+        "Okt": "Oct",
+        "Nov": "Nov",
+        "Dez": "Dec",
+    }
+    current_year_str = str(current_year)
+    logger.info(f"Starting to format dates with the year: {current_year_str}")
+
+    try:
+        df["date"] = df["date"].replace(month_mapping, regex=True)
+        df["date"] = pd.to_datetime(
+            df["date"].astype(str) + " " + current_year_str,
+            format="%d. %b %Y",
+            errors="coerce",
+        )
+
+        if df["date"].isna().any():
+            failed_dates = df[df["date"].isna()]["date"]
+            logger.warning(
+                f"Some dates were not parsed correctly and have been set to NaT. Check these entries: {failed_dates.to_list()}"
+            )
+
+        logger.info("Dates formatted successfully.")
+    except Exception as e:
+        logger.error(f"Error formatting dates: {e}")
+    return df
+
+
+def validate_dates(df, start_year, end_year):
+    """
+    Validate that dates fall within the specified year range.
+
+    Args:
+        df (pd.DataFrame): DataFrame with a 'date' column.
+        start_year (int): Start year for validation.
+        end_year (int): End year for validation.
+
+    Returns:
+        pd.DataFrame: DataFrame with dates validated.
+    """
+    initial_count = df.shape[0]
+    df = df[(df['date'].dt.year >= start_year) & (df['date'].dt.year <= end_year)]
+    final_count = df.shape[0]
+    logger.info(f"Validated dates. Rows before: {initial_count}, after: {final_count}")
+    return df
+
+
+def get_year(pdf_path):
+    """
+    Extract the year from the PDF using the extract_version function.
+
+    Args:
+        pdf_path (str): Path to the PDF file.
+
+    Returns:
+        int or None: Extracted year or None if not found.
+    """
+    try:
+        version_datetime = extract_version(pdf_path)
+        if version_datetime:
+            logger.debug(f"Extracted version year: {version_datetime.year}")
+            return version_datetime.year
+        logger.warning("Version datetime not found.")
+        return None
+    except Exception as e:
+        logger.error(f"Error extracting year: {e}")
+        return None
+
+
+# ================================
+# OpenAI Parsing Functions
+# ================================
+
+def openai_parser(api_key, details):
+    """
+    Parse complex multi-line timetable event details into structured JSON using OpenAI API.
+
+    Args:
+        api_key (str): OpenAI API key.
+        details (str): Raw event details to parse.
+
+    Returns:
+        list: List of parsed event dictionaries.
+    """
+    client = OpenAI(api_key=api_key)
+    failure_response = [{
+        "course": "!!! AiParsing Failure!!!",
+        "lecturer": [],
+        "location": "",
+        "details": "",
+    }]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are provided with event details from a timetable, including course names, lecturers, "
+                "locations, and additional details. Your task is to parse these details into a structured JSON "
+                "format compliant with RFC8259, where each JSON object includes only 'course', 'lecturer', 'location', "
+                "and 'details'. The 'lecturer' field should be an array containing multiple names, regardless of their "
+                "position in the input. Here is a list of some existing names: ['Herth', 'Wetter', 'Battermann', "
+                "'P. Wette', 'Luhmeyer', 'Schünemann', 'P. Wette', 'Simon']. Ensure no additional fields are introduced. "
+                "For example, if the input is 'Programmieren in C, P. Wette/ D 216 Praktikum 1, Gr. B Simon "
+                "Wechselstromtechnik Battermann/ D 221 Praktikum 2, Gr. A Schünemann', the output should be "
+                "[{'course': 'Programmieren in C', 'lecturer': ['P. Wette', 'Simon'], 'location': 'D 216', 'details': 'Praktikum 1, Gr. B'}, "
+                "{'course': 'Wechselstromtechnik', 'lecturer': ['Battermann', 'Schünemann'], 'location': 'D 221', 'details': 'Praktikum 2, Gr. A'}]. "
+                "Correctly identify and include all lecturers, even if they appear after location or detail descriptions, ensuring accurate and comprehensive "
+                "data representation in each event."
+            ),
+        },
+        {"role": "user", "content": details},
+    ]
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0,
+                max_tokens=512,
+                top_p=1,
+            )
+            structured_response = response.choices[0].message.content
+            if not structured_response:
+                logger.warning("Received no content to parse, attempting retry.")
+                continue
+
+            structured_data = json.loads(structured_response)
+            logger.info("Successfully parsed the response.")
+
+            if isinstance(structured_data, dict):
+                return [structured_data]
+            elif isinstance(structured_data, list):
+                return structured_data
+            else:
+                logger.warning("Parsed data is not a list or dict.")
+                return failure_response
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"Retry {attempt + 1}/{max_retries}: Failed to parse JSON response. {str(e)} Trying again."
+            )
+        except (IndexError, KeyError, Exception) as e:
+            logger.error(
+                f"Error during parsing: {e}. Attempt {attempt + 1} of {max_retries}."
+            )
+            if attempt == max_retries - 1:
+                logger.critical(
+                    "Error parsing details after several attempts, please check the input format and try again."
+                )
+                return failure_response
+
+    logger.error("Failed to obtain a valid response after multiple attempts.")
+    return failure_response
+
+
+# ================================
+# Data Processing Functions
+# ================================
+
+def convert_raw_event_data_to_list(df):
+    """
+    Convert the 'raw_details' column from strings to lists and clean special characters.
+
+    Args:
+        df (pd.DataFrame): DataFrame with 'raw_details' column.
+
+    Returns:
+        pd.DataFrame: DataFrame with 'raw_details' as lists.
+    """
+    try:
+        df["raw_details"] = df["raw_details"].str.split("\n")
+        df["raw_details"] = df["raw_details"].apply(
+            lambda x: [detail.strip().replace('\xa0', ' ') for detail in x] 
+            if isinstance(x, list) else x
+        )
+        logger.debug("Converted 'raw_details' to lists and cleaned special characters.")
+        return df
+    except Exception as e:
+        logger.error(f"Error converting raw details to list: {e}")
+        return df
+
+
+def check_multievent(df):
+    """
+    Check and flag rows that contain multiple events.
+
+    Args:
+        df (pd.DataFrame): DataFrame with 'raw_details' column.
+
+    Returns:
+        pd.DataFrame: DataFrame with 'multi_event' flag.
+    """
+    try:
+        df["multi_event"] = df['raw_details'].apply(
+            lambda x: len(x) > 4 if isinstance(x, list) else False
+        )
+        multi_event_count = df['multi_event'].sum()
+        logger.info(f"Number of multi-event rows: {multi_event_count}")
+        return df
+    except Exception as e:
+        logger.error(f"Error checking for multiple events: {e}")
+        return df
+
+
+def process_data(df, api_key):
+    """
+    Process the DataFrame to extract structured event data.
+
+    Args:
+        df (pd.DataFrame): DataFrame to process.
+        api_key (str): OpenAI API key.
+
+    Returns:
+        pd.DataFrame: Processed DataFrame with structured event data.
+    """
+    processed_events_columns = [
+        "date",
+        "start_time",
+        "end_time",
+        "course",
+        "lecturer",
+        "location",
+        "details",
+    ]
+    processed_events = []
+
+    for _, row in df.iterrows():
+        raw_details = row["raw_details"]
+        logger.info(f"Processing row: {row.to_dict()}")
+
+        if row["multi_event"]:
+            logger.info("Detected multi-event row, invoking openai_parser.")
+            details_string = ", ".join(raw_details)
+            parsed_events = openai_parser(api_key, details_string)
+            logger.info(f"Parsed events: {parsed_events}")
+
+            if isinstance(parsed_events, list):
+                for event in parsed_events:
+                    if isinstance(event, dict):
+                        processed_event = {
+                            "date": row["date"],
+                            "start_time": row["start_time"],
+                            "end_time": row["end_time"],
+                            "course": event.get("course", ""),
+                            "lecturer": event.get("lecturer", []),
+                            "location": event.get("location", ""),
+                            "details": event.get("details", ""),
+                        }
+                        processed_events.append(processed_event)
+                        logger.info(f"Added parsed event: {processed_event}")
+            else:
+                logger.warning(f"Parsed events is not a list: {parsed_events}")
+        else:
+            event = {
+                "date": row["date"],
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "course": raw_details[0] if len(raw_details) > 0 else "Unknown Course",
+                "lecturer": [raw_details[1]] if len(raw_details) > 1 else ["Unknown Lecturer"],
+                "location": raw_details[2] if len(raw_details) > 2 else "Unknown Location",
+                "details": raw_details[3] if len(raw_details) > 3 else "",
+            }
+
+            processed_events.append(event)
+            logger.info(f"Added single event: {event}")
+
+    processed_df = pd.DataFrame(processed_events, columns=processed_events_columns)
+    logger.info("Completed processing all rows.")
+    return processed_df
+
+
+# ================================
+# Main Parser Class
+# ================================
+
+class PdfParser:
+    """
+    A class to parse timetable PDFs and extract structured event data.
+    """
+
+    def __init__(self, api_key, start_year=2024, end_year=2025, output_dir="output"):
+        """
+        Initialize the PdfParser.
+
+        Args:
+            api_key (str): OpenAI API key.
+            start_year (int, optional): Start year for date validation. Defaults to 2024.
+            end_year (int, optional): End year for date validation. Defaults to 2025.
+            output_dir (str, optional): Directory to save outputs. Defaults to "output".
+        """
+        self.api_key = api_key
+        self.start_year = start_year
+        self.end_year = end_year
+        self.output_dir = output_dir
+
+        # Ensure the output directory exists
+        os.makedirs(self.output_dir, exist_ok=True)
+        logger.debug(f"Initialized PdfParser with output directory: {self.output_dir}")
+
+    def parse_pdf(self, pdf_path, save_raw=False, save_csv_events=False):
+        """
+        Parse the PDF and extract structured event data.
+
+        Args:
+            pdf_path (str): Path to the PDF file.
+            save_raw (bool, optional): Whether to save raw tables. Defaults to False.
+            save_csv_events (bool, optional): Whether to save the events DataFrame as CSV. Defaults to False.
+
+        Returns:
+            pd.DataFrame or None: Structured event DataFrame or None if processing fails.
+        """
+        logger.info(f"Starting PDF parsing for: {pdf_path}")
+        raw_data = extract_tables(pdf_path)
+
+        if raw_data:
+            if save_raw:
+                save_raw_tables(raw_data, self.output_dir)
+
+            to_df = convert_tablelist_to_dataframe(raw_data)
+            df = melt_df(to_df)
+            df = forward_fill_dates(df)
+            df = df[df["raw_details"] != ""]
+            df = clean_special_chars(df)
+            df = clean_time_slot(df)
+            df = split_time_slot(df)
+            df = convert_raw_event_data_to_list(df)
+            year = get_year(pdf_path)
+
+            if year:
+                df = format_date(df, year)
+                df = validate_dates(df, start_year=self.start_year, end_year=self.end_year)
+            else:
+                logger.warning("Year information is missing. Skipping date formatting.")
+
+            df = df.sort_values(by=["date", "start_time"])
+            df = check_multievent(df)
+
+            if save_csv_events:
+                # Generate a dynamic CSV filename based on the PDF filename
+                base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+                output_csv_filename = f"{base_name}_events.csv"
+                output_csv_path = os.path.join(self.output_dir, output_csv_filename)
+
+                save_to_csv(df, output_csv_path)
+                logger.info(f"Final DataFrame saved to {output_csv_path}")
+
+            logger.info("PDF parsing completed successfully.")
+            return df
+        else:
+            logger.error(f"Failed to create DataFrame from PDF: {pdf_path}")
+            return None
+
+
+# ================================
+# Main Execution Block
+# ================================
+
+if __name__ == "__main__":
+    # Example usage
+    api_key = load_config("config/config.yaml").get("api_key")
+    pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
+
+    parser = PdfParser(api_key=api_key, output_dir="output")
+    df = parser.parse_pdf(pdf_path, save_raw=False, save_csv_events=True)
+
+    if df is not None:
+        logger.info("Parsed DataFrame:")
+        logger.info(df.head())
+    else:
+        logger.error("Parsing failed.")
+
+
+# src/libs/utils.py
+import logging
+import pandas as pd
+import yaml
+import os
+from logger import setup_logger
+
+# Set up the logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+def read_csv(input_path):
+    try:
+        df = pd.read_csv(input_path)
+        logging.info(f"Successfully read data from: {input_path}")
+        return df
+    except Exception as e:
+        logging.error(f"Failed to read data from {input_path}: {e}")
+        return None
+
+
+def save_to_csv(df, path):
+    try:
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        df.to_csv(path, index=False)
+        logging.info(f"Data successfully saved to {path}")
+    except Exception as e:
+        logging.error(f"Failed to save data to {path}: {e}")
+
+
+def load_config(filename="config/config.yaml"):
+    """Load config from a YAML file."""
+    with open(filename, "r") as file:
+        # Load the YAML file
+        config = yaml.safe_load(file)
+    return config
+
+
+def save_events_to_json(df, output_path):
+    """Save the extracted events to a JSON file."""
+    try:
+        df.to_json(output_path, orient="records", lines=False)
+        logging.info(f"Successfully saved DataFrame to {output_path}")
+    except Exception as e:
+        logging.error(f"Failed to save DataFrame to JSON: {e}")
+
+
+if __name__ == "__main__":
+    # Example usage
+    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+    output_path = "./output/test_data.csv"
+    save_to_csv(df, output_path)
+    config = load_config()
+    print(config)
+
+
+# src/libs/timetable_version.py
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import Optional, Union
+import logging
+import fitz
+from logger import setup_logger
+
+
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+def extract_version(
+    pdf_path: str, return_timestamp: bool = True
+) -> Optional[Union[float, str]]:
+    """
+    Extract the version date and time from the first page of a PDF.
+
+    This function searches for a specific pattern:
+    "Version: DD.MM.YYYY, HH:MM Uhr" and returns the extracted version as either
+    a Unix timestamp or a human-readable string.
+
+    Args:
+        pdf_path (str): The file path to the PDF.
+        return_timestamp (bool, optional): If True, return the version as a Unix timestamp.
+                                           If False, return it as a human-readable string.
+
+    Returns:
+        Optional[Union[float, str]]: The extracted version as a timestamp (float) if return_timestamp is True,
+                                     or a human-readable string if return_timestamp is False.
+                                     Returns None if the version cannot be extracted.
+    """
+    pdf_file = Path(pdf_path)
+
+    if not pdf_file.is_file():
+        logger.error(f"The specified PDF file does not exist: {pdf_path}")
+        return None
+
+    try:
+        logger.info(f"Opening PDF file: {pdf_path}")
+        with fitz.open(pdf_file) as pdf_document:
+            if pdf_document.page_count < 1:
+                logger.warning(f"The PDF file has no pages: {pdf_path}")
+                return None
+
+            first_page = pdf_document.load_page(0)  # Load the first page (0-indexed)
+            first_page_text = first_page.get_text()
+
+            # Define the regex pattern to match the version string
+            version_pattern = r"Version:\s*(\d{2}\.\d{2}\.\d{4}),\s*(\d{2}:\d{2})\s*Uhr"
+            match = re.search(version_pattern, first_page_text)
+
+            if match:
+                date_version = match.group(1)  # Example: "26.09.2024"
+                time_version = match.group(2)  # Example: "11:13"
+
+                # Combine date and time into a single string
+                version_str = f"{date_version} {time_version}"
+
+                # Parse the combined string into a datetime object
+                version_datetime = datetime.strptime(version_str, "%d.%m.%Y %H:%M")
+                logger.info(
+                    f"Extracted version from '{pdf_file.name}': {version_datetime}"
+                )
+
+                if return_timestamp:
+                    # Return as Unix timestamp
+                    return version_datetime.timestamp()
+                else:
+                    # Return as human-readable string
+                    return version_datetime.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                logger.warning(f"Version pattern not found in the PDF: {pdf_file.name}")
+                return None
+
+    except Exception as e:
+        logger.error(
+            f"An error occurred while extracting version from '{pdf_file.name}': {e}"
+        )
+        return None
+
+
+if __name__ == "__main__":
+    # Example usage of the extract_version function
+    pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
+
+    # Set to True for timestamp, False for human-readable format
+    return_as_timestamp = False
+
+    version = extract_version(pdf_path, return_timestamp=return_as_timestamp)
+
+    if version:
+        if return_as_timestamp:
+            print(f"Extracted Version Timestamp: {version}")
+        else:
+            print(f"Extracted Version (Human-readable): {version}")
+    else:
+        print("Failed to extract version from the PDF.")
+
+
+# src/libs/update_google_calendar.py
+import os
+import json
+import logging
+import csv
+from datetime import datetime, timedelta
+import pytz
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from logger import setup_logger  # Set up the logger
+
+# Set up logging
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+class GoogleCalendarAPI:
+    def __init__(
+        self,
+        calendar_id,
+        time_zone,
+        scopes,
+        token_json_file,
+        credentials_json_file,
+        max_results=2500,
+        dry_run=False,
+    ):
+        self.calendar_id = calendar_id
+        self.time_zone = time_zone
+        self.scopes = scopes
+        self.token_json_file = token_json_file
+        self.credentials_json_file = credentials_json_file
+        self.max_results = max_results
+        self.dry_run = dry_run
+        if not dry_run:
+            self.service = self.authenticate()
+
+    def authenticate(self):
+        creds = None
+        if os.path.exists(self.token_json_file):
+            creds = Credentials.from_authorized_user_file(
+                self.token_json_file, self.scopes
+            )
+
+        # Handle token refresh or re-authentication
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    logger.error(f"Failed to refresh token: {e}")
+                    os.remove(self.token_json_file)  # Remove invalid token
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    self.credentials_json_file, self.scopes
+                )
+                creds = flow.run_local_server(port=0)
+                with open(self.token_json_file, "w") as token:
+                    token.write(creds.to_json())
+
+        logger.info("Authenticated with Google Calendar API.")
+        return build("calendar", "v3", credentials=creds)
+
+    def fetch_events(self, start_date, end_date):
+        if self.dry_run:
+            logger.info("Dry run mode: Not fetching remote events.")
+            return []
+
+        logger.info(f"Fetching events between {start_date} and {end_date}")
+        events_result = (
+            self.service.events()
+            .list(
+                calendarId=self.calendar_id,
+                timeMin=start_date.isoformat(),
+                timeMax=end_date.isoformat(),
+                maxResults=self.max_results,
+                singleEvents=True,
+                orderBy="startTime",
+                timeZone=self.time_zone,
+            )
+            .execute()
+        )
+        return events_result.get("items", [])
+
+    def prepare_event_data(self, event):
+        try:
+            # Convert timestamp to date
+            date_timestamp = event["date"]
+            date = datetime.fromtimestamp(date_timestamp / 1000, pytz.utc)
+
+            # Combine date with start and end times
+            start_time = datetime.strptime(event["start_time"], "%H:%M:%S").time()
+            end_time = datetime.strptime(event["end_time"], "%H:%M:%S").time()
+
+            # Localize the datetime objects
+            local_tz = pytz.timezone(self.time_zone)
+            start_datetime = local_tz.localize(
+                datetime.combine(date.date(), start_time)
+            )
+            end_datetime = local_tz.localize(datetime.combine(date.date(), end_time))
+
+            # Ensure lecturer is a list
+            lecturer_field = event["lecturer"]
+            lecturer_list = (
+                json.loads(lecturer_field.replace("'", '"'))
+                if isinstance(lecturer_field, str)
+                else lecturer_field
+            )
+
+            # Get event details, ensure it's not None
+            details = event.get("details", "")
+
+            # Combine summary and details
+            summary = f"{event['course']}, {details}" if details else event["course"]
+
+            return {
+                "summary": summary,
+                "location": event.get("location", ""),
+                "start": {
+                    "dateTime": start_datetime.isoformat(),
+                    "timeZone": self.time_zone,
+                },
+                "end": {
+                    "dateTime": end_datetime.isoformat(),
+                    "timeZone": self.time_zone,
+                },
+                "description": ", ".join(lecturer_list),
+            }
+        except Exception as e:
+            logger.error(f"Error preparing event data: {event} - {e}")
+            return None
+
+    def create_event(self, event):
+        event_data = self.prepare_event_data(event)
+        if event_data:
+            if self.dry_run:
+                logger.info(f"Dry run mode: Prepared event data: {event_data}")
+                return event_data
+            else:
+                created_event = (
+                    self.service.events()
+                    .insert(calendarId=self.calendar_id, body=event_data)
+                    .execute()
+                )
+                logger.info(f'Event created: {created_event["summary"]}')
+                return created_event
+        else:
+            logger.error("Failed to create event due to preparation error.")
+
+    def delete_event(self, event_id):
+        if self.dry_run:
+            logger.info(f"Dry run mode: Would delete event with ID: {event_id}")
+        else:
+            self.service.events().delete(
+                calendarId=self.calendar_id, eventId=event_id
+            ).execute()
+            logger.info(f"Deleted event with ID: {event_id}")
+
+
+def create_all_events(calendar_api, local_events):
+    created_events = []
+    for event in local_events:
+        created_event = calendar_api.create_event(event)
+        if created_event:
+            created_events.append(created_event)
+    return created_events
+
+
+def delete_all_events(calendar_api, time_zone):
+    start_date = datetime.now(pytz.timezone(time_zone)) - timedelta(days=300)
+    end_date = datetime.now(pytz.timezone(time_zone)) + timedelta(days=300)
+    logger.info(f"Fetching events between {start_date} and {end_date}")
+
+    remote_events = calendar_api.fetch_events(start_date, end_date)
+    for event in remote_events:
+        calendar_api.delete_event(event["id"])
+    logger.info("All events deleted successfully.")
+
+
+def save_events_to_csv(events, filename):
+    if not events:
+        logger.warning("No events to save.")
+        return
+
+    keys = events[0].keys()
+    with open(filename, "w", newline="") as output_file:
+        dict_writer = csv.DictWriter(output_file, fieldnames=keys)
+        dict_writer.writeheader()
+        dict_writer.writerows(events)
+
+    logger.info(f"Events saved to {filename}.")
+
+
+def main(
+    calendar_id,
+    time_zone,
+    scopes,
+    token_json_file,
+    credentials_json_file,
+    max_results=2500,
+    dry_run=False,
+):
+    calendar_api = GoogleCalendarAPI(
+        calendar_id,
+        time_zone,
+        scopes,
+        token_json_file,
+        credentials_json_file,
+        max_results,
+        dry_run,
+    )
+
+    # Load local events from JSON file
+    try:
+        with open("output/final_events.json", "r") as file:
+            local_events = json.load(file)
+            logger.info(f"Found {len(local_events)} events in the timetable.")
+    except json.JSONDecodeError as e:
+        logger.error(f"Error reading final_events.json: {e}")
+        return
+
+    if dry_run:
+        created_events = create_all_events(calendar_api, local_events)
+        save_events_to_csv(created_events, "output/dry_run_output.csv")
+    else:
+        delete_all_events(calendar_api, time_zone)
+        create_all_events(calendar_api, local_events)
+
+
+if __name__ == "__main__":
+    # Example inputs, replace with actual values
+    calendar_id = "9a901e48af79cd47cb67c184c642400a25fc301ad3bacf45ae6e003672174209@group.calendar.google.com"
+    time_zone = "Europe/Berlin"
+    api_url = ["https://www.googleapis.com/auth/calendar"]
+    token_json_file = "config/token.json"
+    credential_json_file = "config/client_secret.json"
+    max_results = 2500
+    dry_run = True
+    main(
+        calendar_id,
+        time_zone,
+        api_url,
+        token_json_file,
+        credential_json_file,
+        max_results,
+        dry_run,
+    )
+
+

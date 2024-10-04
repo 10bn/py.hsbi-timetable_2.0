@@ -1,5 +1,3 @@
-# helper_functions.py
-
 import logging
 import pandas as pd
 import yaml
@@ -38,6 +36,7 @@ def load_config(filename="config/config.yaml"):
         # Load the YAML file
         config = yaml.safe_load(file)
     return config
+
 
 def save_events_to_json(df, output_path):
     """Save the extracted events to a JSON file."""

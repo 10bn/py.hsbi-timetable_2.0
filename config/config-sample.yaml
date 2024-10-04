@@ -12,42 +12,51 @@
 # --------------------------------------------
 # OpenAI API key for parsing timetable event details.
 # Obtain your API key from https://platform.openai.com/account/api-keys
-api_key: ""
-
-
-
-# Time zone setting for Google Calendar events.
-# Format: Region/City (e.g., "Europe/Berlin")
-time_zone: "Europe/Berlin"
-
-# Dry run mode flag.
-# - true: Simulate actions without making actual changes.
-# - false: Perform real updates to Google Calendar.
-dry_run: false
+openai:
+  api_key: ""  # Replace with your OpenAI API key
 
 # --------------------------------------------
-# WebDAV Configuration
+# WebDAV and Timetables Configuration
 # --------------------------------------------
-# Credentials for accessing the WebDAV server used to sync timetables.
-credentials:
-  username: ""  # Replace with your WebDAV username
-  password: ""  # Replace with your WebDAV password
+webdav:
+  credentials:
+    username: ""  # Replace with your WebDAV username
+    password: ""  # Replace with your WebDAV password
+
+  # Timetables configuration (URLs, keywords, and associated Google Calendar IDs)
+  timetables:
+    timetable_1:
+      url: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+      keyword: "ELM 3"
+      calendar_id: "9a901e48af79cd47cb67c184c642400a25fc301ad3bacf45ae6e003672174209@group.calendar.google.com"
+    timetable_2:
+      url: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+      keyword: "ELM 5"
+      calendar_id: "dd947828be3d70701a1373643ece5ef5bee930d44c14fa2bf7ba3dc9004d603e@group.calendar.google.com"
 
 # --------------------------------------------
 # Google Calendar Configuration
 # --------------------------------------------
-# Google Calendar ID where events will be synchronized.
-# You can find your Calendar ID in Google Calendar settings.
-calendars:
-  calendar_1: "your_google_calendar_id_here"
-  calendar_2: "your_google_calendar_id_here"
-  
-# URLs for accessing resources on the WebDAV server.
-urls:
-  timetable_1: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
-  timetable_2: "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+google_calendar:
+  auth:
+    token_json_file: "config/token.json"
+    credentials_json_file: "config/client_secret.json"
 
-# Keywords associated with each timetable.
-keywords:
-  timetable_1: "ELM 3"
-  timetable_2: "ELM 5"
+  # Time zone setting for Google Calendar events
+  time_zone: "Europe/Berlin"
+
+# --------------------------------------------
+# General Settings
+# --------------------------------------------
+general:
+  # Dry run mode flag.
+  # - true: Simulate actions without making actual changes.
+  # - false: Perform real updates to Google Calendar.
+  dry_run: false
+
+# --------------------------------------------
+# Output Settings
+# --------------------------------------------
+output:
+  download_dir: "./downloads/"
+  output_dir: "./output/"

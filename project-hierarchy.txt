@@ -17,8 +17,11 @@ py.hsbi-timetable_2.0
 │  └─ timetable_2
 │     └─ Stundenplan WS_2024_2025_ELM 5.pdf
 ├─ logfile.log
+├─ merge.py
+├─ merged_output.txt
 ├─ numpy-2.1.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
 ├─ output
+│  ├─ Stundenplan WS_2024_2025_ELM 3_events.csv
 │  └─ version_log.csv
 ├─ poetry.lock
 ├─ pyproject.toml

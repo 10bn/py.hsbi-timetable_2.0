@@ -1,5 +1,3 @@
-# src/libs/parser.py
-
 import json
 import logging
 import os
@@ -595,10 +593,10 @@ class PdfParser:
 
 if __name__ == "__main__":
     # Example usage
-    API_KEY = load_config("config/config.yaml").get("api_key")
+    api_key = load_config("config/config.yaml").get("api_key")
     pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
 
-    parser = PdfParser(api_key=API_KEY, output_dir="output")
+    parser = PdfParser(api_key=api_key, output_dir="output")
     df = parser.parse_pdf(pdf_path, save_raw=False, save_csv_events=True)
 
     if df is not None:
