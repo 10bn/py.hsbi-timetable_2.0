@@ -1,7 +1,43 @@
-# Gitignore
+# Config files (sensitive information)
 config/client_secret.json
 config/token.json
 config/config.yaml
 
+# Python virtual environments
+venv/
+.venv/
+
+# Poetry specific
+poetry.lock
+
+# Docker specific files
+devcontainer/
+
+# VSCode settings
+.vscode/
+
+# System-specific files
+.DS_Store
+
+# Logs
+logfile.log
+*.log
+
+# Output files
 downloads/
 output/
+
+# Compiled Python files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Wheel files
+*.whl
+
+# macOS specific
+.DS_Store

@@ -3,29 +3,44 @@ py.hsbi-timetable_2.0
 ├─ .devcontainer
 │  ├─ Dockerfile
 │  ├─ devcontainer.json
-│  └─ setup_github_auth.sh
+│  └─ setup_git.sh
 ├─ .gitignore
 ├─ .vscode
 │  └─ settings.json
+├─ README.md
 ├─ config
-│  ├─ client_secret.json
 │  ├─ config-sample.yaml
-│  ├─ config.yaml
-│  └─ token.json
-├─ readme.md
-├─ requirements.txt
+│  └─ config.yaml
+├─ downloads
+│  ├─ timetable_1
+│  │  └─ Stundenplan WS_2024_2025_ELM 3.pdf
+│  └─ timetable_2
+│     └─ Stundenplan WS_2024_2025_ELM 5.pdf
+├─ logfile.log
+├─ numpy-2.1.1-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl
+├─ output
+│  └─ version_log.csv
+├─ poetry.lock
+├─ pyproject.toml
+├─ python_dateutil-2.9.0.post0-py2.py3-none-any.whl
+├─ pytz-2024.2-py2.py3-none-any.whl
 ├─ ruff.toml
+├─ setup.sh
+├─ six-1.16.0-py2.py3-none-any.whl
 └─ src
    ├─ .DS_Store
    ├─ libs
    │  ├─ __init__.py
-   │  ├─ camelot_pdf_to_df.py
-   │  ├─ download_webdav_timetables.py
-   │  ├─ get_timetable_ver.py
-   │  ├─ helper_functions.py
-   │  ├─ log_config.py
-   │  ├─ openai_parser.py
-   │  ├─ process_raw_df.py
-   │  ├─ tempCodeRunnerFile.py
-   │  └─ update_timetable_google_api.py
+   │  ├─ __pycache__
+   │  │  ├─ helper_functions.cpython-312.pyc
+   │  │  ├─ log_config.cpython-312.pyc
+   │  │  ├─ logger.cpython-312.pyc
+   │  │  ├─ timetable_version.cpython-312.pyc
+   │  │  └─ utils.cpython-312.pyc
+   │  ├─ downloader.py
+   │  ├─ logger.py
+   │  ├─ parser.py
+   │  ├─ timetable_version.py
+   │  ├─ update_google_calendar.py
+   │  └─ utils.py
    └─ main.py
