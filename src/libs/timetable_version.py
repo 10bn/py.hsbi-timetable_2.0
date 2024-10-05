@@ -4,14 +4,15 @@ from pathlib import Path
 from typing import Optional, Union
 import logging
 import fitz
-from logger import setup_logger
+
+from libs.logger import setup_logger
 
 
 setup_logger()
 logger = logging.getLogger(__name__)
 
 
-def extract_version(
+def extract_version_from_pdf(
     pdf_path: str, return_timestamp: bool = True
 ) -> Optional[Union[float, str]]:
     """
@@ -88,7 +89,7 @@ if __name__ == "__main__":
     # Set to True for timestamp, False for human-readable format
     return_as_timestamp = False
 
-    version = extract_version(pdf_path, return_timestamp=return_as_timestamp)
+    version = extract_version_from_pdf(pdf_path, return_timestamp=return_as_timestamp)
 
     if version:
         if return_as_timestamp:

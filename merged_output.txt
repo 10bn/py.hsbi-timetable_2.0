@@ -4,58 +4,22 @@ import os
 from libs.downloader import WebDAVDownloader
 from libs.parser import PdfParser
 from libs.update_google_calendar import GoogleCalendarAPI
-
 from libs.utils import load_config, save_events_to_json
-
-# Setup logger
 from libs.logger import setup_logger
 
+# Setup logger
 setup_logger()
 logger = logging.getLogger(__name__)
 
 
-def download_pdfs(timetables, credentials, download_dir, dry_run):
-    """Downloads the PDFs using WebDAVDownloader for each timetable."""
-    for timetable_key, timetable_data in timetables.items():
-        downloader = WebDAVDownloader(
-            urls={timetable_key: timetable_data["url"]},
-            credentials=credentials,
-            keywords={timetable_key: timetable_data["keyword"]},
-            dry_run=dry_run,
-            output_path=os.path.join(download_dir, timetable_key),
-        )
-        downloader.run()
-
-
-def parse_pdf(timetable_key, pdf_path, api_key, output_dir):
-    """Processes the PDF using PdfParser and saves structured events to a JSON file."""
-    parser = PdfParser(
-        api_key=api_key, output_dir=os.path.join(output_dir, timetable_key)
-    )
-    df = parser.parse_pdf(pdf_path, save_raw=False, save_csv_events=True)
-    if df is not None:
-        # Save the parsed events as JSON
-        json_output_path = os.path.join(
-            output_dir, timetable_key, f"{timetable_key}_events.json"
-        )
-        save_events_to_json(df, json_output_path)
-    return df
-
-
-def update_google_calendar(df, token_json_file, credentials_json_file, time_zone):
-    """Updates the Google Calendar with the parsed events."""
-    calendar_api = GoogleCalendarAPI(
-        token_json_file=token_json_file,
-        credentials_json_file=credentials_json_file,
-        time_zone=time_zone,
-    )
-    calendar_api.update_calendar(df)
-
-
 def main():
-    """Main execution function."""
+    """
+    Main function to execute the workflow of downloading, parsing PDFs, and updating Google Calendar.
+    """
     # Step 1: Load configuration
     config = load_config("config/config.yaml")
+
+    # Extract required values from the configuration
     api_key = config["openai"]["api_key"]
     timetables = config["webdav"]["timetables"]
     credentials = config["webdav"]["credentials"]
@@ -66,9 +30,12 @@ def main():
     output_dir = config["output"]["output_dir"]
     dry_run = config["general"]["dry_run"]
 
-    # Step 3: Download the PDFs from WebDAV servers
-    download_pdfs(timetables, credentials, download_dir, dry_run)
+    for timetable in timetables:
+        # Step 2: Download PDF files
+        print(timetable)
 
+
+ 
 
 if __name__ == "__main__":
     main()
@@ -325,6 +292,12 @@ if __name__ == "__main__":
 
 
 # src/libs/__init__.py
+# src/libs/__init__.py
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 
 
 # src/libs/logger.py

@@ -6,9 +6,9 @@ import camelot
 import pandas as pd
 from openai import OpenAI
 
-from logger import setup_logger
-from timetable_version import extract_version
-from utils import save_to_csv, load_config
+from libs.logger import setup_logger
+from libs.timetable_version import extract_version
+from libs.utils import save_to_csv, load_config
 # Setup logging
 setup_logger()
 logger = logging.getLogger(__name__)

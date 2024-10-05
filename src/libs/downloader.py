@@ -1,247 +1,219 @@
+# downloader.py
+
 import logging
 import os
-from typing import Dict, List
 
+from typing import Dict, List
 from webdav3.client import Client
 
-from utils import load_config
-from logger import setup_logger
+from libs.logger import setup_logger
 
-# Setup logging
+# ================================
+# Logger Setup
+# ================================
+
 setup_logger()
 logger = logging.getLogger(__name__)
-
 
 # ================================
 # WebDAV Downloader Class
 # ================================
 
-
 class WebDAVDownloader:
     """
-    A class to handle downloading files from multiple WebDAV servers based on specified keywords.
+    A class to handle downloading files from a WebDAV server based on specified keywords.
     """
 
     def __init__(
         self,
-        urls: Dict[str, str],
-        credentials: Dict[str, str],
-        keywords: Dict[str, str],
+        url: str,
+        username: str,
+        password: str,
         dry_run: bool = False,
-        output_path: str = "./downloads/",
+        base_download_dir: str = "./downloads/",
     ):
         """
         Initialize the WebDAVDownloader.
 
         Args:
-            urls (Dict[str, str]): A dictionary where keys are identifiers and values are WebDAV URLs.
-            credentials (Dict[str, str]): A dictionary containing 'username' and 'password'.
-            keywords (Dict[str, str]): A dictionary mapping each URL identifier to a keyword.
+            url (str): WebDAV server URL.
+            username (str): WebDAV username.
+            password (str): WebDAV password.
             dry_run (bool, optional): If True, simulate actions without performing downloads. Defaults to False.
-            output_path (str, optional): Base directory to download files into. Defaults to "./downloads/".
+            base_download_dir (str, optional): Base directory to download files into. Defaults to "./downloads/".
         """
-        self.urls = urls
-        self.credentials = credentials
-        self.keywords = keywords
+        self.url = url
+        self.username = username
+        self.password = password
         self.dry_run = dry_run
-        self.output_path = output_path
+        self.base_download_dir = base_download_dir
+        self.timetables: List[Dict[str, List[str]]] = []
 
-        # Ensure the base output directory exists
-        os.makedirs(self.output_path, exist_ok=True)
-        logger.debug(
-            f"Initialized WebDAVDownloader with output directory: {self.output_path}"
-        )
+        # Initialize WebDAV client
+        self.client = self.initialize_client()
 
-    def initialize_client(self, url: str, key: str) -> Client:
+    def initialize_client(self) -> Client:
         """
-        Initialize a WebDAV client.
-
-        Args:
-            url (str): WebDAV URL.
-            key (str): Identifier for logging purposes.
+        Initialize and return a WebDAV client.
 
         Returns:
             Client: Configured WebDAV client.
-
-        Raises:
-            Exception: If client initialization fails.
         """
         options = {
-            "webdav_hostname": url,
-            "webdav_login": self.credentials.get("username"),
-            "webdav_password": self.credentials.get("password"),
-            "verbose": True,
+            "webdav_hostname": self.url,
+            "webdav_login": self.username,
+            "webdav_password": self.password,
+            "webdav_port": 443,  # Default HTTPS port
+            "webdav_root": "/",
+            "webdav_timeout": 30,
+            "webdav_chunk_size": 32768,
+            "webdav_ssl_verify": True,
         }
 
         try:
             client = Client(options)
-            client.verify = True  # Set to False to skip SSL verification if needed
-            logger.debug(f"Initialized WebDAV client for '{key}'")
+            client.verify = True  # Ensure SSL certificates are verified
+            logger.debug("WebDAV client initialized successfully.")
             return client
         except Exception as e:
-            logger.error(f"Failed to initialize WebDAV client for '{key}': {e}")
+            logger.error(f"Failed to initialize WebDAV client: {e}")
             raise
 
-    def list_files(self, client: Client, key: str) -> List[str]:
+    def add_timetable(self, keywords: List[str], download_path: str) -> None:
         """
-        Retrieve a list of files from the WebDAV server.
+        Add a timetable with its list of keywords and download path.
 
         Args:
-            client (Client): Configured WebDAV client.
-            key (str): Identifier for logging purposes.
+            keywords (List[str]): List of keywords to filter files. All keywords must be present in the filename.
+            download_path (str): Local path to save downloaded files.
+        """
+        if not keywords or not download_path:
+            logger.error("Both keywords and download_path must be provided.")
+            return
+
+        # Convert all keywords to lowercase for case-insensitive matching
+        keywords_lower = [keyword.lower() for keyword in keywords]
+
+        # Ensure download path exists
+        os.makedirs(download_path, exist_ok=True)
+        logger.debug(f"Added timetable with keywords {keywords_lower} and download path '{download_path}'.")
+
+        self.timetables.append({
+            "keywords": keywords_lower,
+            "download_path": download_path,
+        })
+
+    def list_files(self) -> List[str]:
+        """
+        List all files in the WebDAV server.
 
         Returns:
             List[str]: List of file paths.
-
-        Raises:
-            Exception: If listing files fails.
         """
         try:
-            files = client.list()
-            logger.info(f"Retrieved {len(files)} files from '{key}'")
+            files = self.client.list()
+            logger.info(f"Retrieved {len(files)} files from the WebDAV server.")
             return files
         except Exception as e:
-            logger.error(f"Failed to list files for '{key}': {e}")
+            logger.error(f"Failed to list files: {e}")
             raise
 
-    def download_file(
-        self, client: Client, remote_path: str, local_path: str, key: str
-    ) -> None:
+    def download_file(self, remote_path: str, local_path: str) -> None:
         """
         Download a single file from the WebDAV server.
 
         Args:
-            client (Client): Configured WebDAV client.
             remote_path (str): Path to the remote file.
             local_path (str): Path where the file will be saved locally.
-            key (str): Identifier for logging purposes.
-
-        Raises:
-            Exception: If downloading the file fails.
         """
         if self.dry_run:
-            logger.info(
-                f"Dry run enabled. Skipping download of '{remote_path}' to '{local_path}'."
-            )
+            logger.info(f"Dry run enabled. Skipping download of '{remote_path}' to '{local_path}'.")
             return
 
         try:
+            # Ensure the local directory exists
             os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            client.download_sync(remote_path=remote_path, local_path=local_path)
-            logger.info(f"Successfully downloaded '{remote_path}' to '{local_path}'")
+            self.client.download_sync(remote_path=remote_path, local_path=local_path)
+            logger.info(f"Downloaded '{remote_path}' to '{local_path}'.")
         except Exception as e:
-            logger.error(f"Failed to download file '{remote_path}' from '{key}': {e}")
-            raise
-
-    def process_url(self, key: str, url: str, keyword: str) -> None:
-        """
-        Process a single WebDAV URL: list files and download relevant PDFs based on the keyword.
-
-        Args:
-            key (str): Identifier for the URL.
-            url (str): WebDAV URL.
-            keyword (str): Keyword to filter PDF files.
-        """
-        logger.info(f"Processing URL for '{key}': {url}")
-
-        if not isinstance(keyword, str):
-            logger.error(f"Keyword for '{key}' must be a string.")
-            return
-
-        keyword = keyword.lower()
-        if not keyword:
-            logger.warning(
-                f"No keyword provided for '{key}'. All PDF files will be downloaded."
-            )
-
-        try:
-            client = self.initialize_client(url, key)
-        except Exception:
-            return
-
-        download_dir = os.path.join(self.output_path, key)
-        os.makedirs(download_dir, exist_ok=True)
-        logger.info(f"Download directory for '{key}': {download_dir}")
-
-        try:
-            files = self.list_files(client, key)
-        except Exception:
-            return
-
-        for file in files:
-            logger.debug(f"Found file: {file}")
-
-        for file in files:
-            file_lower = file.lower()
-            is_pdf = file_lower.endswith(".pdf")
-            contains_keyword = keyword in file_lower if keyword else False
-
-            if is_pdf and (contains_keyword or not keyword):
-                logger.info(f"Attempting to download file: {file}")
-                local_filename = os.path.basename(file)
-                local_path = os.path.join(download_dir, local_filename)
-                try:
-                    self.download_file(client, file, local_path, key)
-                except Exception:
-                    continue
-            else:
-                if is_pdf:
-                    logger.info(f"Skipped PDF file (keyword not found): {file}")
-                else:
-                    logger.info(f"Skipped non-PDF file: {file}")
+            logger.error(f"Failed to download '{remote_path}': {e}")
 
     def run(self) -> None:
         """
-        Execute the download process for all configured URLs.
+        Execute the download process for all added timetables.
         """
         logger.info("Starting the WebDAV download process.")
 
-        for key, url in self.urls.items():
-            keyword = self.keywords.get(key, "")
-            self.process_url(key, url, keyword)
+        try:
+            all_files = self.list_files()
+        except Exception:
+            logger.error("Aborting download process due to failure in listing files.")
+            return
 
-        logger.info("Finished downloading timetables.")
+        for timetable in self.timetables:
+            keywords = timetable["keywords"]
+            download_path = timetable["download_path"]
+            logger.info(f"Processing timetable with keywords {keywords}.")
 
+            # Filter files that contain all the keywords (case-insensitive)
+            matching_files = [
+                file for file in all_files
+                if all(keyword in file.lower() for keyword in keywords)
+            ]
+
+            if not matching_files:
+                logger.warning(f"No files found containing all keywords {keywords}.")
+                continue
+
+            logger.info(f"Found {len(matching_files)} file(s) matching the keywords {keywords}.")
+
+            for file in matching_files:
+                if not file.lower().endswith(".pdf"):
+                    logger.info(f"Skipped non-PDF file: {file}")
+                    continue
+
+                local_filename = os.path.basename(file)
+                local_file_path = os.path.join(download_path, local_filename)
+
+                logger.debug(f"Preparing to download '{file}' to '{local_file_path}'.")
+                self.download_file(file, local_file_path)
+
+        logger.info("Completed the WebDAV download process.")
 
 # ================================
-# Main Execution Function
+# Example Usage
 # ================================
-
 
 def main():
     """
-    Main execution function.
+    Example usage of the WebDAVDownloader class.
     """
-    try:
-        # Load the configuration
-        config = load_config("config/config.yaml")
-        urls = config.get("urls")
-        credentials = config.get("credentials")
-        keywords = config.get("keywords", {})  # Default to empty dict if not provided
-        dry_run = config.get("dry_run", False)
-        output_path = config.get("output_path", "./downloads/")
+    # Replace these with your actual WebDAV credentials and URL
+    webdav_url = "https://nbl.hsbi.de/elearning/webdav.php/FH-Bielefeld/ref_155901"
+    webdav_username = "muhsadel"
+    webdav_password = "PVQDu65n4q"
 
-        if not urls or not credentials:
-            logger.error("Configuration must include 'urls' and 'credentials'.")
-            exit(1)
+    # Initialize the downloader
+    downloader = WebDAVDownloader(
+        url=webdav_url,
+        username=webdav_username,
+        password=webdav_password,
+        dry_run=False,  # Set to True to enable dry run
+        base_download_dir="./downloads/"
+    )
 
-        if not keywords:
-            logger.warning(
-                "No keywords provided. All PDF files from all URLs will be downloaded."
-            )
+    # Add timetables with lists of keywords
+    downloader.add_timetable(
+        keywords=["ELM 3", "Stundenplan"],
+        download_path="./downloads/timetable_elm_3/"
+    )
+    downloader.add_timetable(
+        keywords=["ELM 5", "Stundenplan"],
+        download_path="./downloads/timetable_elm_5/"
+    )
 
-        downloader = WebDAVDownloader(
-            urls=urls,
-            credentials=credentials,
-            keywords=keywords,
-            dry_run=dry_run,
-            output_path=output_path,
-        )
-        downloader.run()
-
-    except Exception as e:
-        logger.exception(f"An unexpected error occurred: {e}")
-
+    # Execute the download process
+    downloader.run()
 
 if __name__ == "__main__":
     main()
