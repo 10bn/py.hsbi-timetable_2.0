@@ -1,116 +1,112 @@
+# src/main.py
+
 import logging
-import os
+from pathlib import Path
 import shutil
+import json
 
 from libs.downloader import WebDAVDownloader
 from libs.timetable_version import extract_version_from_pdf
 from libs.utils import load_config
 from libs.logger import setup_logger
+#from libs.parser import PdfParser  # Assuming you want to use PdfParser here
+from libs.update_google_calendar import GoogleCalendarAPI  # Assuming calendar update is part of main
+
+# ================================
+# Load Configuration
+# ================================
+
+# Load the configuration first to access log_level
+config = load_config()
+
+# Extract log_level from config and convert it to a logging level
+log_level_str = config.get("general", {}).get("log_level", "WARNING").upper()
+log_level = getattr(logging, log_level_str, logging.WARNING)
 
 # ================================
 # Logger Setup
 # ================================
 
-setup_logger()
+# Setup logger with the configured log level
+setup_logger(log_level)
+
+# Obtain a logger for this module
 logger = logging.getLogger(__name__)
 
+# ================================
+# Function Definitions
+# ================================
 
-def ensure_directory_exists(directory):
-    """
-    Ensures that the specified directory exists. Creates it if it doesn't exist.
-    Args:
-        directory (str): The directory path.
-    """
-    if not os.path.exists(directory):
-        logger.info(f"Directory '{directory}' does not exist. Creating it.")
-        os.makedirs(directory)
-    else:
-        logger.info(f"Directory '{directory}' already exists.")
-
-
-def get_existing_versions(download_dir):
+def get_existing_versions(download_dir: Path) -> dict:
     """
     Scan the base download directory and retrieve the existing timetable versions.
 
     Args:
-        download_dir (str): Path to the download directory.
+        download_dir (Path): Path to the download directory.
 
     Returns:
         dict: Dictionary of timetable keys and their corresponding versions.
     """
-    ensure_directory_exists(download_dir)
+    # Inline directory existence check and creation
+    download_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Directory '{download_dir}' ensured.")
 
     logger.info(f"Scanning for existing versions in '{download_dir}'")
     timetable_versions = {}
 
-    for folder in filter(
-        lambda f: f != "temp" and os.path.isdir(os.path.join(download_dir, f)),
-        os.listdir(download_dir),
-    ):
-        folder_path = os.path.join(download_dir, folder)
-        versions = [
-            v
-            for v in os.listdir(folder_path)
-            if os.path.isdir(os.path.join(folder_path, v))
-        ]
-        logger.info(
-            f"Found {len(versions)} versions for timetable '{folder}': {versions}"
-        )
-        timetable_versions[folder] = versions
+    for folder in filter(lambda f: f.name != "temp" and f.is_dir(), download_dir.iterdir()):
+        versions = [v.name for v in folder.iterdir() if v.is_dir()]
+        logger.info(f"Found {len(versions)} versions for timetable '{folder.name}': {versions}")
+        timetable_versions[folder.name] = versions
 
     logger.info("Completed scanning existing versions.")
     return timetable_versions
 
 
 def process_downloaded_files(
-    download_path, timetable_key, downloader, existing_versions
+    download_path: Path, timetable_key: str, downloader: WebDAVDownloader, existing_versions: dict
 ):
     """
     Process the downloaded files for a specific timetable, extract versions,
     and move them to the appropriate directory if they are new.
 
     Args:
-        download_path (str): Path to the downloaded files.
+        download_path (Path): Path to the downloaded files.
         timetable_key (str): The timetable identifier.
         downloader (WebDAVDownloader): Instance of the downloader.
         existing_versions (dict): Dictionary of existing versions.
     """
-    logger.info(
-        f"Processing downloaded files for timetable '{timetable_key}' in '{download_path}'"
-    )
-    downloaded_files = [
-        f for f in os.listdir(download_path) if f.lower().endswith(".pdf")
-    ]
+
+    logger.info(f"Processing downloaded files for timetable '{timetable_key}' in '{download_path}'")
+    downloaded_files = list(download_path.glob("*.pdf"))
 
     if not downloaded_files:
-        logger.warning(
-            f"No PDF files found for timetable '{timetable_key}' in '{download_path}'"
-        )
+        logger.warning(f"No PDF files found for timetable '{timetable_key}' in '{download_path}'")
         return
 
     for file in downloaded_files:
-        full_file_path = os.path.join(download_path, file)
-        logger.info(f"Extracting version from '{full_file_path}'")
-        version = str(
-            extract_version_from_pdf(full_file_path, return_timestamp=False)
-        )
+        version = extract_version_from_pdf(str(file))
+        if version is None:
+            logger.warning(f"Could not extract version from '{file.name}'. Skipping this file.")
+            continue
 
-        logger.info(
-            f"Extracted version '{version}' for timetable '{timetable_key}'"
-        )
-        if version not in existing_versions.get(timetable_key, []):
-            logger.info(
-                f"New version detected for '{timetable_key}': {version}"
-            )
-            target_dir = os.path.join(
-                downloader.base_download_dir, timetable_key, version
-            )
-            os.makedirs(target_dir, exist_ok=True)
-            logger.info(f"Moving file '{file}' to '{target_dir}'")
-            shutil.move(full_file_path, os.path.join(target_dir, file))
+        # Check if the version already exists
+        existing_versions_list = existing_versions.get(timetable_key, [])
+        if version not in existing_versions_list:
+            logger.info(f"New version detected for '{timetable_key}': {version}")
+            target_dir = downloader.base_download_dir / timetable_key / version
+            # Inline directory existence check and creation
+            target_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Directory '{target_dir}' ensured.")
+            logger.info(f"Moving file '{file.name}' to '{target_dir}'")
+            shutil.move(str(file), target_dir / file.name)
+            # Update existing_versions to include the new version
+            existing_versions.setdefault(timetable_key, []).append(version)
+        else:
+            logger.info(f"Version '{version}' for '{timetable_key}' already exists. Skipping.")
 
 
-def download_and_compare_timetables(existing_versions, downloader, timetables):
+def download_and_compare_timetables(existing_versions: dict, downloader: WebDAVDownloader, timetables: dict):
     """
     Download the timetables from WebDAV, extract and compare their versions,
     and move new versions to their respective folders.
@@ -120,19 +116,20 @@ def download_and_compare_timetables(existing_versions, downloader, timetables):
         downloader (WebDAVDownloader): Instance of the downloader.
         timetables (dict): Timetable configuration from the config file.
     """
-    temp_download_dir = os.path.join(downloader.base_download_dir, "temp")
-    os.makedirs(temp_download_dir, exist_ok=True)
-    logger.info(
-        f"Created temporary directory '{temp_download_dir}' for downloading timetables."
-    )
+    temp_download_dir = downloader.base_download_dir / "temp"
+    # Inline directory existence check and creation
+    temp_download_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Directory '{temp_download_dir}' ensured.")
+    logger.info(f"Created temporary directory '{temp_download_dir}' for downloading timetables.")
 
     # Add timetables to the downloader
     for timetable_key, timetable in timetables.items():
-        download_path = os.path.join(temp_download_dir, timetable_key)
-        logger.info(
-            f"Adding timetable '{timetable_key}' with keywords {timetable['keywords']} to downloader"
-        )
-        downloader.add_timetable(timetable["keywords"], download_path)
+        download_path = temp_download_dir / timetable_key
+        # Inline directory existence check and creation
+        download_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Directory '{download_path}' ensured.")
+        logger.info(f"Adding timetable '{timetable_key}' with keywords {timetable['keywords']} to downloader")
+        downloader.add_timetable(timetable["keywords"], str(download_path))
 
     logger.info("Starting the WebDAV download process.")
     downloader.run()
@@ -140,10 +137,7 @@ def download_and_compare_timetables(existing_versions, downloader, timetables):
     # Process each timetable's downloaded files
     logger.info("Processing downloaded timetables for version comparison.")
     for timetable_key in timetables.keys():
-        download_path = os.path.join(temp_download_dir, timetable_key)
-        process_downloaded_files(
-            download_path, timetable_key, downloader, existing_versions
-        )
+        process_downloaded_files(temp_download_dir / timetable_key, timetable_key, downloader, existing_versions)
 
     # Clean up the temporary directory
     logger.info(f"Cleaning up temporary directory '{temp_download_dir}'.")
@@ -151,41 +145,121 @@ def download_and_compare_timetables(existing_versions, downloader, timetables):
     logger.info(f"Temporary directory '{temp_download_dir}' removed.")
 
 
-def main():
+# def parse_and_save_pdf(api_key: str, pdf_path: str, output_dir: str = "output", save_raw: bool = False, save_csv_events: bool = False):
+#     """
+#     Parse the given PDF and save the extracted events.
+
+#     Args:
+#         api_key (str): OpenAI API key.
+#         pdf_path (str): Path to the PDF file.
+#         output_dir (str, optional): Directory to save outputs. Defaults to "output".
+#         save_raw (bool, optional): Whether to save raw tables. Defaults to False.
+#         save_csv_events (bool, optional): Whether to save the events DataFrame as CSV. Defaults to False.
+#     """
+#     logger.info(f"Starting PDF parsing for: {pdf_path}")
+#     parser = PdfParser(api_key=api_key, output_dir=output_dir)
+#     df = parser.parse_pdf(pdf_path, save_raw=save_raw, save_csv_events=save_csv_events)
+
+#     if df is not None:
+#         logger.info("Parsed DataFrame:")
+#         logger.info(df.head())
+#     else:
+#         logger.error("Parsing failed.")
+
+
+# def update_google_calendar(calendar_config: dict):
+#     """
+#     Update Google Calendar with the parsed events.
+
+#     Args:
+#         calendar_config (dict): Configuration for Google Calendar API.
+#     """
+#     logger.info("Starting Google Calendar update process.")
+#     calendar_api = GoogleCalendarAPI(
+#         calendar_id=calendar_config["calendar_id"],
+#         time_zone=calendar_config["time_zone"],
+#         scopes=calendar_config["scopes"],
+#         token_json_file=calendar_config["token_json_file"],
+#         credentials_json_file=calendar_config["credentials_json_file"],
+#         max_results=calendar_config.get("max_results", 2500),
+#         dry_run=calendar_config.get("dry_run", False),
+#     )
+
+#     # Load local events from JSON file
+#     try:
+#         with open("output/final_events.json", "r") as file:
+#             local_events = json.load(file)
+#             logger.info(f"Found {len(local_events)} events in the timetable.")
+#     except json.JSONDecodeError as e:
+#         logger.error(f"Error reading final_events.json: {e}")
+#         return
+
+#     if calendar_config.get("dry_run", False):
+#         created_events = create_all_events(calendar_api, local_events)
+#         save_events_to_csv(created_events, "output/dry_run_output.csv")
+#     else:
+#         delete_all_events(calendar_api, calendar_config["time_zone"])
+#         create_all_events(calendar_api, local_events)
+
+#     logger.info("Google Calendar update process completed.")
+
+
+def main_flow():
     """
-    Main function to set up downloader, fetch existing timetable versions,
-    and download and compare timetables.
+    Orchestrate the downloading, parsing, and calendar updating processes.
     """
-    logger.info("Application started. Loading configuration.")
-    config = load_config()
+    try:
+        logger.info("Starting the main application flow.")
 
-    downloader = WebDAVDownloader(
-        url=config["webdav"]["url"],
-        username=config["webdav"]["username"],
-        password=config["webdav"]["password"],
-        dry_run=config["general"]["dry_run"],
-        base_download_dir=config["path_settings"]["download_dir"],
-    )
-    logger.info("WebDAVDownloader initialized successfully.")
-
-    # Ensure the base download directory exists
-    ensure_directory_exists(downloader.base_download_dir)
-
-    # Retrieve existing timetable versions
-    existing_versions = get_existing_versions(downloader.base_download_dir)
-
-    if not existing_versions:
-        logger.warning(
-            "No existing versions found. Consider downloading at least one version manually."
+        # Initialize WebDAVDownloader with configuration
+        downloader = WebDAVDownloader(
+            url=config["webdav"]["url"],
+            username=config["webdav"]["username"],
+            password=config["webdav"]["password"],
+            dry_run=config["general"]["dry_run"],
+            base_download_dir=Path(config["path_settings"]["download_dir"]),
         )
+        logger.info("WebDAVDownloader initialized successfully.")
 
-    # Download and compare timetables
-    download_and_compare_timetables(
-        existing_versions, downloader, config["timetables"]
-    )
+        # Ensure the base download directory exists
+        downloader.base_download_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Directory '{downloader.base_download_dir}' ensured.")
 
-    logger.info("Application finished successfully.")
+        # Retrieve existing timetable versions
+        existing_versions = get_existing_versions(downloader.base_download_dir)
+
+        if not existing_versions:
+            logger.warning("No existing versions found. Consider downloading at least one version manually.")
+
+        # Download and compare timetables
+        download_and_compare_timetables(existing_versions, downloader, config["timetables"])
+
+        # # Parse PDFs and update Google Calendar
+        # # Assuming that PDFs are stored in specific directories after downloading
+        # # You might need to adjust the paths based on your actual directory structure
+        # for timetable_key in config["timetables"].keys():
+        #     latest_version_dir = downloader.base_download_dir / timetable_key / sorted(existing_versions[timetable_key])[-1]
+        #     # Assuming the latest PDF is the one to parse
+        #     pdf_files = list(latest_version_dir.glob("*.pdf"))
+        #     if pdf_files:
+        #         parse_and_save_pdf(
+        #             api_key=config["openai"]["api_key"],
+        #             pdf_path=str(pdf_files[0]),
+        #             output_dir="output",
+        #             save_raw=True,
+        #             save_csv_events=True
+        #         )
+        #     else:
+        #         logger.warning(f"No PDF files found in '{latest_version_dir}' for parsing.")
+
+        # # Update Google Calendar
+        # update_google_calendar(config["google_calendar"])
+
+        # logger.info("Main application flow completed successfully.")
+
+    except Exception as e:
+        logger.critical(f"An unhandled exception occurred: {e}", exc_info=True)
 
 
 if __name__ == "__main__":
-    main()
+    main_flow()

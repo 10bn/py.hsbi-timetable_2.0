@@ -9,10 +9,6 @@ from googleapiclient.discovery import build
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 
-from libs.logger import setup_logger  # Set up the logger
-
-# Set up logging
-setup_logger()
 logger = logging.getLogger(__name__)
 
 
@@ -91,7 +87,9 @@ class GoogleCalendarAPI:
             date = datetime.fromtimestamp(date_timestamp / 1000, pytz.utc)
 
             # Combine date with start and end times
-            start_time = datetime.strptime(event["start_time"], "%H:%M:%S").time()
+            start_time = datetime.strptime(
+                event["start_time"], "%H:%M:%S"
+            ).time()
             end_time = datetime.strptime(event["end_time"], "%H:%M:%S").time()
 
             # Localize the datetime objects
@@ -99,7 +97,9 @@ class GoogleCalendarAPI:
             start_datetime = local_tz.localize(
                 datetime.combine(date.date(), start_time)
             )
-            end_datetime = local_tz.localize(datetime.combine(date.date(), end_time))
+            end_datetime = local_tz.localize(
+                datetime.combine(date.date(), end_time)
+            )
 
             # Ensure lecturer is a list
             lecturer_field = event["lecturer"]
@@ -113,7 +113,9 @@ class GoogleCalendarAPI:
             details = event.get("details", "")
 
             # Combine summary and details
-            summary = f"{event['course']}, {details}" if details else event["course"]
+            summary = (
+                f"{event['course']}, {details}" if details else event["course"]
+            )
 
             return {
                 "summary": summary,
@@ -151,7 +153,9 @@ class GoogleCalendarAPI:
 
     def delete_event(self, event_id):
         if self.dry_run:
-            logger.info(f"Dry run mode: Would delete event with ID: {event_id}")
+            logger.info(
+                f"Dry run mode: Would delete event with ID: {event_id}"
+            )
         else:
             self.service.events().delete(
                 calendarId=self.calendar_id, eventId=event_id

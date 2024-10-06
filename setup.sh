@@ -29,6 +29,9 @@ source "$HOME/.bashrc"
 
 echo "📦 Installing dependencies with Poetry..."
 
+# Set the Python version to use with Poetry
+poetry env use $(pyenv which python)
+
 # Verify Poetry installation
 poetry --version
 

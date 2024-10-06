@@ -3,10 +3,6 @@ import pandas as pd
 import yaml
 import os
 
-from libs.logger import setup_logger
-
-# Set up the logger
-setup_logger()
 logger = logging.getLogger(__name__)
 
 
