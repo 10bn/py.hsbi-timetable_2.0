@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
 import camelot
 import pandas as pd
@@ -21,15 +21,14 @@ logger = logging.getLogger(__name__)
 # ================================
 # Environment Configuration
 # ================================
-
-# Prepend Ghostscript's bin directory to PATH
-GS_BIN_PATH = "/opt/homebrew/bin"
-os.environ["PATH"] = os.pathsep.join([GS_BIN_PATH, os.environ.get("PATH", "")])
-
-# Prepend Ghostscript's lib directory to DYLD_LIBRARY_PATH
-GS_LIB_PATH = "/opt/homebrew/opt/ghostscript/lib"
-os.environ["DYLD_LIBRARY_PATH"] = os.pathsep.join([GS_LIB_PATH, os.environ.get("DYLD_LIBRARY_PATH", "")])
-
+if os.name == "posix" and os.uname().sysname == "Darwin":
+    try:
+        from libs.utils import init_ghostscript_via_brew_on_mac
+        logger.info("Initializing Ghostscript via Homebrew on macOS.")
+        init_ghostscript_via_brew_on_mac()
+        logger.info("Ghostscript initialization completed successfully.")
+    except Exception as e:
+        logger.error(f"An error occurred while initializing Ghostscript: {e}", exc_info=True)
 
 # ================================
 # PDF Parsing Functions

@@ -6,6 +6,30 @@ import os
 logger = logging.getLogger(__name__)
 
 
+def init_ghostscript_via_brew_on_mac():
+    """
+    Initialize the environment by setting up necessary paths for Ghostscript.
+    This sets the PATH and DYLD_LIBRARY_PATH environment variables to include
+    Ghostscript's bin and lib directories.
+    """
+    
+    # Define Ghostscript bin and lib paths
+    GS_BIN_PATH = "/opt/homebrew/bin"
+    GS_LIB_PATH = "/opt/homebrew/opt/ghostscript/lib"
+
+    try:
+        # Update the PATH environment variable
+        os.environ["PATH"] = f"{GS_BIN_PATH}{os.pathsep}{os.environ.get('PATH', '')}"
+        logging.info(f"Updated PATH environment variable to include: {GS_BIN_PATH}")
+
+        # Update the DYLD_LIBRARY_PATH environment variable
+        os.environ["DYLD_LIBRARY_PATH"] = f"{GS_LIB_PATH}{os.pathsep}{os.environ.get('DYLD_LIBRARY_PATH', '')}"
+        logging.info(f"Updated DYLD_LIBRARY_PATH environment variable to include: {GS_LIB_PATH}")
+    except Exception as e:
+        logging.error(f"Failed to initialize Ghostscript environment: {e}")
+
+
+
 def read_csv(input_path):
     try:
         df = pd.read_csv(input_path)
