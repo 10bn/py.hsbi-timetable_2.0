@@ -79,7 +79,7 @@ class GoogleCalendarAPI:
             .execute()
         )
         return events_result.get("items", [])
-
+    
     def prepare_event_data(self, event):
         try:
             # Convert timestamp to date
@@ -87,39 +87,34 @@ class GoogleCalendarAPI:
             date = datetime.fromtimestamp(date_timestamp / 1000, pytz.utc)
 
             # Combine date with start and end times
-            start_time = datetime.strptime(
-                event["start_time"], "%H:%M:%S"
-            ).time()
+            start_time = datetime.strptime(event["start_time"], "%H:%M:%S").time()
             end_time = datetime.strptime(event["end_time"], "%H:%M:%S").time()
 
             # Localize the datetime objects
             local_tz = pytz.timezone(self.time_zone)
-            start_datetime = local_tz.localize(
-                datetime.combine(date.date(), start_time)
-            )
-            end_datetime = local_tz.localize(
-                datetime.combine(date.date(), end_time)
-            )
+            start_datetime = local_tz.localize(datetime.combine(date.date(), start_time))
+            end_datetime = local_tz.localize(datetime.combine(date.date(), end_time))
 
-            # Ensure lecturer is a list
-            lecturer_field = event["lecturer"]
-            lecturer_list = (
-                json.loads(lecturer_field.replace("'", '"'))
-                if isinstance(lecturer_field, str)
-                else lecturer_field
-            )
+            # Extract course, lecturer, and other details from raw_details
+            raw_details = event.get("raw_details", [])
+            if not raw_details:
+                raise ValueError("raw_details is empty.")
 
-            # Get event details, ensure it's not None
-            details = event.get("details", "")
+            # Assuming the first element is the course name
+            course = raw_details[0].strip()
 
-            # Combine summary and details
-            summary = (
-                f"{event['course']}, {details}" if details else event["course"]
-            )
+            # Assuming the second element is the lecturer's name
+            lecturer = raw_details[1].strip() if len(raw_details) > 1 else "Unknown Lecturer"
+
+            # Combine any additional details into the description
+            additional_details = ", ".join([detail.strip() for detail in raw_details[2:]]) if len(raw_details) > 2 else ""
+
+            # Combine summary and additional details
+            summary = f"{course}" + (f" - {additional_details}" if additional_details else "")
 
             return {
                 "summary": summary,
-                "location": event.get("location", ""),
+                "location": raw_details[2].strip() if len(raw_details) > 2 else "",
                 "start": {
                     "dateTime": start_datetime.isoformat(),
                     "timeZone": self.time_zone,
@@ -128,7 +123,7 @@ class GoogleCalendarAPI:
                     "dateTime": end_datetime.isoformat(),
                     "timeZone": self.time_zone,
                 },
-                "description": ", ".join(lecturer_list),
+                "description": lecturer,
             }
         except Exception as e:
             logger.error(f"Error preparing event data: {event} - {e}")
@@ -218,7 +213,7 @@ def main(
 
     # Load local events from JSON file
     try:
-        with open("output/final_events.json", "r") as file:
+        with open("/workspaces/py.hsbi-timetable_2.0/output/Stundenplan WS_2024_2025_ELM 3_Stand 2024-10-11_events.json", "r") as file:
             local_events = json.load(file)
             logger.info(f"Found {len(local_events)} events in the timetable.")
     except json.JSONDecodeError as e:
@@ -227,7 +222,7 @@ def main(
 
     if dry_run:
         created_events = create_all_events(calendar_api, local_events)
-        save_events_to_csv(created_events, "output/dry_run_output.csv")
+        save_events_to_csv(created_events, "/workspaces/py.hsbi-timetable_2.0/output/created_events.csv")
     else:
         delete_all_events(calendar_api, time_zone)
         create_all_events(calendar_api, local_events)
@@ -235,13 +230,13 @@ def main(
 
 if __name__ == "__main__":
     # Example inputs, replace with actual values
-    calendar_id = "9a901e48af79cd47cb67c184c642400a25fc301ad3bacf45ae6e003672174209@group.calendar.google.com"
+    calendar_id = "a0fd5d4d46978655a3a840648665285da64e2a08e761c5a9b0800fd5730d2024@group.calendar.google.com"
     time_zone = "Europe/Berlin"
     api_url = ["https://www.googleapis.com/auth/calendar"]
-    token_json_file = "config/token.json"
-    credential_json_file = "config/client_secret.json"
+    token_json_file = "/workspaces/py.hsbi-timetable_2.0/config/token.json"
+    credential_json_file = "/workspaces/py.hsbi-timetable_2.0/config/client_secret.json"
     max_results = 2500
-    dry_run = True
+    dry_run = False
     main(
         calendar_id,
         time_zone,

@@ -5,7 +5,7 @@ from logging.handlers import RotatingFileHandler
 # Constants for better maintainability
 LOG_FILE = "logfile.log"
 LOG_FORMAT_FILE = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(lineno)d)"
-LOG_FORMAT_STREAM = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+LOG_FORMAT_STREAM = "%(asctime)s - %(name)s - %(levelname)s:\n  %(message)s"
 
 def setup_logger(log_level: int = logging.INFO, log_to_console: bool = True) -> None:
     """

@@ -1,191 +1,88 @@
 # src/__init__.py
 
 
-# src/main.py
-# src/main.py
-
+# src/libs/utils.py
 import logging
-from pathlib import Path
-import shutil
+import pandas as pd
+import yaml
+import os
 
-
-from libs.downloader import WebDAVDownloader
-from libs.timetable_version import extract_version_from_pdf
-from libs.utils import load_config
-from libs.logger import setup_logger
-
-# ================================
-# Load Configuration
-# ================================
-
-# Load the configuration first to access log_level
-config = load_config()
-
-# Extract log_level from config and convert it to a logging level
-log_level_str = config.get("general", {}).get("log_level", "WARNING").upper()
-log_level = getattr(logging, log_level_str, logging.WARNING)
-
-# ================================
-# Logger Setup
-# ================================
-
-# Setup logger with the configured log level
-setup_logger(log_level)
-
-# Obtain a logger for this module
 logger = logging.getLogger(__name__)
 
-# ================================
-# Function Definitions
-# ================================
 
-def get_existing_versions(download_dir: Path) -> dict:
+def init_ghostscript_via_brew_on_mac():
     """
-    Scan the base download directory and retrieve the existing timetable versions.
-
-    Args:
-        download_dir (Path): Path to the download directory.
-
-    Returns:
-        dict: Dictionary of timetable keys and their corresponding versions.
+    Initialize the environment by setting up necessary paths for Ghostscript.
+    This sets the PATH and DYLD_LIBRARY_PATH environment variables to include
+    Ghostscript's bin and lib directories.
     """
-    # Inline directory existence check and creation
-    download_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Directory '{download_dir}' ensured.")
+    
+    # Define Ghostscript bin and lib paths
+    GS_BIN_PATH = "/opt/homebrew/bin"
+    GS_LIB_PATH = "/opt/homebrew/opt/ghostscript/lib"
 
-    logger.info(f"Scanning for existing versions in '{download_dir}'")
-    timetable_versions = {}
+    try:
+        # Update the PATH environment variable
+        os.environ["PATH"] = f"{GS_BIN_PATH}{os.pathsep}{os.environ.get('PATH', '')}"
+        logging.info(f"Updated PATH environment variable to include: {GS_BIN_PATH}")
 
-    for folder in filter(lambda f: f.name != "temp" and f.is_dir(), download_dir.iterdir()):
-        versions = [v.name for v in folder.iterdir() if v.is_dir()]
-        logger.info(f"Found {len(versions)} versions for timetable '{folder.name}': {versions}")
-        timetable_versions[folder.name] = versions
-
-    logger.info("Completed scanning existing versions.")
-    return timetable_versions
-
-
-def process_downloaded_files(
-    download_path: Path, timetable_key: str, downloader: WebDAVDownloader, existing_versions: dict
-):
-    """
-    Process the downloaded files for a specific timetable, extract versions,
-    and move them to the appropriate directory if they are new.
-
-    Args:
-        download_path (Path): Path to the downloaded files.
-        timetable_key (str): The timetable identifier.
-        downloader (WebDAVDownloader): Instance of the downloader.
-        existing_versions (dict): Dictionary of existing versions.
-    """
-
-    logger.info(f"Processing downloaded files for timetable '{timetable_key}' in '{download_path}'")
-    downloaded_files = list(download_path.glob("*.pdf"))
-
-    if not downloaded_files:
-        logger.warning(f"No PDF files found for timetable '{timetable_key}' in '{download_path}'")
-        return
-
-    for file in downloaded_files:
-        version = extract_version_from_pdf(str(file))
-        if version is None:
-            logger.warning(f"Could not extract version from '{file.name}'. Skipping this file.")
-            continue
-
-        # Check if the version already exists
-        existing_versions_list = existing_versions.get(timetable_key, [])
-        if version not in existing_versions_list:
-            logger.info(f"New version detected for '{timetable_key}': {version}")
-            target_dir = downloader.base_download_dir / timetable_key / version
-            # Inline directory existence check and creation
-            target_dir.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Directory '{target_dir}' ensured.")
-            logger.info(f"Moving file '{file.name}' to '{target_dir}'")
-            shutil.move(str(file), target_dir / file.name)
-            # Update existing_versions to include the new version
-            existing_versions.setdefault(timetable_key, []).append(version)
-        else:
-            logger.info(f"Version '{version}' for '{timetable_key}' already exists. Skipping.")
+        # Update the DYLD_LIBRARY_PATH environment variable
+        os.environ["DYLD_LIBRARY_PATH"] = f"{GS_LIB_PATH}{os.pathsep}{os.environ.get('DYLD_LIBRARY_PATH', '')}"
+        logging.info(f"Updated DYLD_LIBRARY_PATH environment variable to include: {GS_LIB_PATH}")
+    except Exception as e:
+        logging.error(f"Failed to initialize Ghostscript environment: {e}")
 
 
-def download_and_compare_timetables(existing_versions: dict, downloader: WebDAVDownloader, timetables: dict):
-    """
-    Download the timetables from WebDAV, extract and compare their versions,
-    and move new versions to their respective folders.
 
-    Args:
-        existing_versions (dict): Dictionary of existing versions.
-        downloader (WebDAVDownloader): Instance of the downloader.
-        timetables (dict): Timetable configuration from the config file.
-    """
-    temp_download_dir = downloader.base_download_dir / "temp"
-    # Inline directory existence check and creation
-    temp_download_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Directory '{temp_download_dir}' ensured.")
-    logger.info(f"Created temporary directory '{temp_download_dir}' for downloading timetables.")
-
-    # Add timetables to the downloader
-    for timetable_key, timetable in timetables.items():
-        download_path = temp_download_dir / timetable_key
-        # Inline directory existence check and creation
-        download_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Directory '{download_path}' ensured.")
-        logger.info(f"Adding timetable '{timetable_key}' with keywords {timetable['keywords']} to downloader")
-        downloader.add_timetable(timetable["keywords"], str(download_path))
-
-    logger.info("Starting the WebDAV download process.")
-    downloader.run()
-
-    # Process each timetable's downloaded files
-    logger.info("Processing downloaded timetables for version comparison.")
-    for timetable_key in timetables.keys():
-        process_downloaded_files(temp_download_dir / timetable_key, timetable_key, downloader, existing_versions)
-
-    # Clean up the temporary directory
-    logger.info(f"Cleaning up temporary directory '{temp_download_dir}'.")
-    shutil.rmtree(temp_download_dir)
-    logger.info(f"Temporary directory '{temp_download_dir}' removed.")
+def read_csv(input_path):
+    try:
+        df = pd.read_csv(input_path)
+        logging.info(f"Successfully read data from: {input_path}")
+        return df
+    except Exception as e:
+        logging.error(f"Failed to read data from {input_path}: {e}")
+        return None
 
 
-def main():
-    """
-    Main function to set up downloader, fetch existing timetable versions,
-    and download and compare timetables.
-    """
-    logger.info("Application started. Loading configuration.")
+def save_to_csv(df, path):
+    try:
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
-    # Initialize WebDAVDownloader with configuration
-    downloader = WebDAVDownloader(
-        url=config["webdav"]["url"],
-        username=config["webdav"]["username"],
-        password=config["webdav"]["password"],
-        dry_run=config["general"]["dry_run"],
-        base_download_dir=Path(config["path_settings"]["download_dir"]),
-    )
-    logger.info("WebDAVDownloader initialized successfully.")
+        df.to_csv(path, index=False)
+        logging.info(f"Data successfully saved to {path}")
+    except Exception as e:
+        logging.error(f"Failed to save data to {path}: {e}")
 
-    # Ensure the base download directory exists
-    downloader.base_download_dir.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Directory '{downloader.base_download_dir}' ensured.")
 
-    # Retrieve existing timetable versions
-    existing_versions = get_existing_versions(downloader.base_download_dir)
+def load_config(filename="config/config.yaml"):
+    """Load config from a YAML file."""
+    with open(filename, "r") as file:
+        # Load the YAML file
+        config = yaml.safe_load(file)
+    return config
 
-    if not existing_versions:
-        logger.warning("No existing versions found. Consider downloading at least one version manually.")
 
-    # Download and compare timetables
-    download_and_compare_timetables(existing_versions, downloader, config["timetables"])
-
-    logger.info("Application finished successfully.")
+def save_events_to_json(df, output_path):
+    """Save the extracted events to a JSON file."""
+    try:
+        df.to_json(output_path, orient="records", lines=False)
+        logging.info(f"Successfully saved DataFrame to {output_path}")
+    except Exception as e:
+        logging.error(f"Failed to save DataFrame to JSON: {e}")
 
 
 if __name__ == "__main__":
-    main()
+    # Example usage
+    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+    output_path = "./output/test_data.csv"
+    save_to_csv(df, output_path)
+    config = load_config()
+    print(config)
 
 
 # src/libs/downloader.py
-# src/downloader.py
+# src/libs/downloader.py
 
 import logging
 from pathlib import Path
@@ -211,7 +108,7 @@ class WebDAVDownloader:
         password: str,
         dry_run: bool = False,
         base_download_dir: str = "./downloads/",
-    ):
+    ) -> None:
         """
         Initialize the WebDAVDownloader.
 
@@ -252,7 +149,8 @@ class WebDAVDownloader:
 
         try:
             client = Client(options)
-            client.verify = True  # Ensure SSL certificates are verified
+            # Assuming 'verify' is not a valid attribute for webdav3.Client
+            # If it is required, ensure it's correctly set
             logger.debug("WebDAV client initialized successfully.")
             return client
         except Exception as e:
@@ -373,23 +271,23 @@ class WebDAVDownloader:
         logger.info("Completed the WebDAV download process.")
 
 
-# src/libs/__init__.py
-
-
 # src/libs/logger.py
 # src/libs/logger.py
 import logging
+from logging.handlers import RotatingFileHandler
 
 # Constants for better maintainability
 LOG_FILE = "logfile.log"
-LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(lineno)d)"
+LOG_FORMAT_FILE = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(lineno)d)"
+LOG_FORMAT_STREAM = "%(asctime)s - %(name)s - %(levelname)s:\n  %(message)s"
 
-def setup_logger(log_level=logging.INFO):
+def setup_logger(log_level: int = logging.INFO, log_to_console: bool = True) -> None:
     """
     Set up the root logger with the specified log level.
-    
+
     Args:
-        log_level (int): Logging level (e.g., logging.DEBUG, logging.INFO).
+        log_level (int, optional): Logging level (e.g., logging.DEBUG, logging.INFO). Defaults to logging.INFO.
+        log_to_console (bool, optional): Whether to add a console stream handler. Defaults to True.
     """
     logger = logging.getLogger()
     
@@ -397,23 +295,26 @@ def setup_logger(log_level=logging.INFO):
     if not logger.hasHandlers():
         logger.setLevel(log_level)
         
-        # File handler
-        file_handler = logging.FileHandler(LOG_FILE)
+        # Rotating File Handler
+        file_handler = RotatingFileHandler(
+            LOG_FILE, maxBytes=5*1024*1024, backupCount=3
+        )  # 5MB per file, keep 3 backups
         file_handler.setLevel(log_level)
-        file_formatter = logging.Formatter(LOG_FORMAT)
+        file_formatter = logging.Formatter(LOG_FORMAT_FILE)
         file_handler.setFormatter(file_formatter)
         logger.addHandler(file_handler)
         
-        # Stream handler (optional: comment out if console logging is not desired)
-        stream_handler = logging.StreamHandler()
-        stream_handler.setLevel(log_level)
-        stream_formatter = logging.Formatter(LOG_FORMAT)
-        stream_handler.setFormatter(stream_formatter)
-        logger.addHandler(stream_handler)
+        if log_to_console:
+            # Stream Handler
+            stream_handler = logging.StreamHandler()
+            stream_handler.setLevel(log_level)
+            stream_formatter = logging.Formatter(LOG_FORMAT_STREAM)
+            stream_handler.setFormatter(stream_formatter)
+            logger.addHandler(stream_handler)
 
 # Example usage
 if __name__ == "__main__":
-    setup_logger()
+    setup_logger(log_level=logging.WARNING, log_to_console=True)
     logger = logging.getLogger(__name__)
     logger.warning("Logger has been set up with default WARNING level.")
 
@@ -422,22 +323,45 @@ if __name__ == "__main__":
 import json
 import logging
 import os
+import re
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 import camelot
 import pandas as pd
-from openai import OpenAI
+import openai
 
-from libs.timetable_version import extract_version
-from libs.utils import save_to_csv, load_config
+from libs.timetable_version import extract_version_from_pdf
+from libs.utils import save_to_csv, load_config, save_events_to_json
+
+# ================================
+# Logger Setup
+# ================================
 
 logger = logging.getLogger(__name__)
+
+# ================================
+# Environment Configuration
+# ================================
+if os.name == "posix" and os.uname().sysname == "Darwin":
+    try:
+        from libs.utils import init_ghostscript_via_brew_on_mac
+
+        logger.info("Initializing Ghostscript via Homebrew on macOS.")
+        init_ghostscript_via_brew_on_mac()
+        logger.info("Ghostscript initialization completed successfully.")
+    except Exception as e:
+        logger.error(
+            f"An error occurred while initializing Ghostscript: {e}",
+            exc_info=True,
+        )
 
 # ================================
 # PDF Parsing Functions
 # ================================
 
 
-def extract_tables(pdf_path):
+def extract_tables(pdf_path: str) -> Optional[List[camelot.core.Table]]:
     """
     Extract tables from a PDF using Camelot.
 
@@ -445,79 +369,94 @@ def extract_tables(pdf_path):
         pdf_path (str): Path to the PDF file.
 
     Returns:
-        list or None: List of extracted tables or None if extraction fails.
+        Optional[List[camelot.core.Table]]: List of extracted tables or None if extraction fails.
     """
     try:
-        logger.info(f"Starting to extract tables from: {pdf_path}")
-        table_list = camelot.read_pdf(pdf_path, flavor="lattice", pages="all")
-        logger.info(f"Successfully extracted {len(table_list)} tables.")
-        return table_list
+        logger.info(f"Starting table extraction from PDF: {pdf_path}")
+        tables = camelot.read_pdf(pdf_path, flavor="lattice", pages="all")
+        table_count = len(tables)
+        if table_count == 0:
+            logger.warning(f"No tables found in PDF: {pdf_path}")
+            return None
+        logger.info(f"Successfully extracted {table_count} tables from PDF.")
+        return tables
     except Exception as e:
-        logger.error(f"Failed to extract tables: {e}")
+        logger.error(
+            f"Failed to extract tables from PDF '{pdf_path}': {e}",
+            exc_info=True,
+        )
         return None
 
 
-def save_raw_tables(table_list, output_dir):
+def save_raw_tables(
+    table_list: List[camelot.core.Table], output_dir: str
+) -> None:
     """
     Save raw tables extracted from PDF to CSV files.
 
     Args:
-        table_list (list): List of tables extracted by Camelot.
+        table_list (List[camelot.core.Table]): List of tables extracted by Camelot.
         output_dir (str): Directory to save the raw CSV files.
     """
-    try:
-        if not table_list:
-            logger.warning("No tables to save.")
-            return
+    if not table_list:
+        logger.warning("No tables provided to save.")
+        return
 
-        raw_output_dir = os.path.join(output_dir, "raw_tables")
-        os.makedirs(raw_output_dir, exist_ok=True)
-        logger.info(f"Saving raw tables to directory: {raw_output_dir}")
+    raw_output_dir = os.path.join(output_dir, "raw_tables")
+    os.makedirs(raw_output_dir, exist_ok=True)
+    logger.info(
+        f"Saving {len(table_list)} raw tables to directory: {raw_output_dir}"
+    )
 
-        for idx, table in enumerate(table_list, start=1):
-            table_filename = os.path.join(
-                raw_output_dir, f"raw_table_{idx}.csv"
-            )
+    for idx, table in enumerate(table_list, start=1):
+        table_filename = os.path.join(raw_output_dir, f"raw_table_{idx}.csv")
+        try:
             table.to_csv(table_filename, index=False)
-            logger.debug(f"Saved raw table {idx} to {table_filename}")
+            logger.debug(f"Saved raw table {idx} to '{table_filename}'.")
+        except Exception as e:
+            logger.error(
+                f"Failed to save raw table {idx} to '{table_filename}': {e}",
+                exc_info=True,
+            )
 
-        logger.info(f"Successfully saved {len(table_list)} raw tables.")
-    except Exception as e:
-        logger.error(f"Failed to save raw tables: {e}")
+    logger.info(f"All raw tables have been saved to '{raw_output_dir}'.")
 
 
-def convert_tablelist_to_dataframe(table_list):
+def convert_tablelist_to_dataframe(
+    table_list: List[camelot.core.Table],
+) -> pd.DataFrame:
     """
     Convert a list of Camelot tables to a single pandas DataFrame.
 
     Args:
-        table_list (list): List of tables extracted by Camelot.
+        table_list (List[camelot.core.Table]): List of tables extracted by Camelot.
 
     Returns:
         pd.DataFrame: Combined DataFrame from all tables.
     """
     try:
+        logger.info("Converting list of tables to a single DataFrame.")
         dataframes = [
-            table.df if i == 0 else table.df.iloc[1:]
+            table.df if i == 0 else table.df.iloc[1:].reset_index(drop=True)
             for i, table in enumerate(table_list)
         ]
-        df_final = pd.concat(dataframes, ignore_index=True)
-        new_header = df_final.iloc[0]
-        df_final = df_final[1:]
-        df_final.columns = new_header
-        df_final.drop(df_final.columns[0], axis=1, inplace=True)
-        df_final.rename(columns={df_final.columns[0]: "date"}, inplace=True)
-
-        logger.debug(
-            f"Converted tables to DataFrame with shape: {df_final.shape}"
+        combined_df = pd.concat(dataframes, ignore_index=True)
+        combined_df.columns = combined_df.iloc[0]
+        combined_df = combined_df[1:].reset_index(drop=True)
+        combined_df.drop(combined_df.columns[0], axis=1, inplace=True)
+        combined_df.rename(
+            columns={combined_df.columns[0]: "date"}, inplace=True
         )
-        return df_final
+        logger.debug(f"Combined DataFrame shape: {combined_df.shape}")
+        return combined_df
     except Exception as e:
-        logger.error(f"Error converting table list to DataFrame: {e}")
+        logger.error(
+            f"Error converting tables to DataFrame: {e}", exc_info=True
+        )
         return pd.DataFrame()
 
 
-def melt_df(df):
+def melt_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Melt the DataFrame to have 'date', 'time_slot', and 'raw_details' columns.
 
@@ -528,17 +467,20 @@ def melt_df(df):
         pd.DataFrame: Melted DataFrame.
     """
     try:
-        df = df.melt(
+        logger.info(
+            "Melting DataFrame to long format with 'date', 'time_slot', and 'raw_details'."
+        )
+        melted_df = df.melt(
             id_vars=["date"], var_name="time_slot", value_name="raw_details"
         )
-        logger.debug(f"DataFrame after melting has shape: {df.shape}")
-        return df
+        logger.debug(f"Melted DataFrame shape: {melted_df.shape}")
+        return melted_df
     except Exception as e:
-        logger.error(f"Error melting DataFrame: {e}")
+        logger.error(f"Error melting DataFrame: {e}", exc_info=True)
         return pd.DataFrame()
 
 
-def forward_fill_dates(df):
+def forward_fill_dates(df: pd.DataFrame) -> pd.DataFrame:
     """
     Forward fill missing dates in the DataFrame.
 
@@ -548,12 +490,17 @@ def forward_fill_dates(df):
     Returns:
         pd.DataFrame: DataFrame with forward-filled dates.
     """
-    df["date"] = df["date"].fillna(method="ffill")
-    logger.debug("Forward filled missing dates.")
-    return df
+    try:
+        logger.info("Forward filling missing dates in the DataFrame.")
+        df["date"] = df["date"].fillna(method="ffill")
+        logger.debug("Missing dates have been forward filled.")
+        return df
+    except Exception as e:
+        logger.error(f"Error forward filling dates: {e}", exc_info=True)
+        return df
 
 
-def clean_special_chars(df):
+def clean_special_chars(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean special characters in the entire DataFrame.
 
@@ -564,19 +511,22 @@ def clean_special_chars(df):
         pd.DataFrame: Cleaned DataFrame.
     """
     try:
-        df = df.applymap(
-            lambda x: x.replace("\xa0", " ") if isinstance(x, str) else x
-        )
-        df = df.applymap(
-            lambda x: x.replace("‐", "-") if isinstance(x, str) else x
-        )
-        logger.info("Special characters cleaned successfully.")
+        logger.info("Cleaning special characters in the DataFrame.")
+        replacements = {
+            "\xa0": " ",
+            "‐": "-",  # Replace hyphen-like characters with standard hyphen
+        }
+        for old, new in replacements.items():
+            df = df.applymap(
+                lambda x: x.replace(old, new) if isinstance(x, str) else x
+            )
+        logger.debug("Special characters have been cleaned.")
     except Exception as e:
-        logger.error(f"Error cleaning special characters: {e}")
+        logger.error(f"Error cleaning special characters: {e}", exc_info=True)
     return df
 
 
-def clean_time_slot(df):
+def clean_time_slot(df: pd.DataFrame) -> pd.DataFrame:
     """
     Clean the 'time_slot' column by removing ' Uhr'.
 
@@ -587,12 +537,22 @@ def clean_time_slot(df):
         pd.DataFrame: DataFrame with cleaned 'time_slot'.
     """
     if "time_slot" in df.columns:
-        df["time_slot"] = df["time_slot"].str.replace(" Uhr", "", regex=False)
-        logger.debug("Cleaned 'time_slot' column.")
+        try:
+            logger.info("Removing ' Uhr' from 'time_slot' column.")
+            df["time_slot"] = df["time_slot"].str.replace(
+                " Uhr", "", regex=False
+            )
+            logger.debug("'time_slot' column has been cleaned.")
+        except Exception as e:
+            logger.error(
+                f"Error cleaning 'time_slot' column: {e}", exc_info=True
+            )
+    else:
+        logger.warning("Column 'time_slot' does not exist in the DataFrame.")
     return df
 
 
-def split_time_slot(df):
+def split_time_slot(df: pd.DataFrame) -> pd.DataFrame:
     """
     Split the 'time_slot' column into 'start_time' and 'end_time'.
 
@@ -602,66 +562,54 @@ def split_time_slot(df):
     Returns:
         pd.DataFrame: DataFrame with 'start_time' and 'end_time' columns.
     """
-    if "time_slot" in df.columns:
-        logger.info(
-            "Splitting 'time_slot' column into 'start_time' and 'end_time'."
+    if "time_slot" not in df.columns:
+        logger.warning("Column 'time_slot' does not exist. Skipping split.")
+        return df
+
+    try:
+        logger.info("Splitting 'time_slot' into 'start_time' and 'end_time'.")
+        time_splits = df["time_slot"].str.split(" - ", n=1, expand=True)
+        time_splits.columns = ["start_time_str", "end_time_str"]
+
+        df["start_time"] = pd.to_datetime(
+            time_splits["start_time_str"].str.strip(),
+            format="%H.%M",
+            errors="coerce",
+        ).dt.time
+        df["end_time"] = pd.to_datetime(
+            time_splits["end_time_str"].str.strip(),
+            format="%H.%M",
+            errors="coerce",
+        ).dt.time
+
+        # Log any parsing issues
+        start_time_issues = df["start_time"].isna()
+        end_time_issues = df["end_time"].isna()
+
+        if start_time_issues.any():
+            problematic_slots = df.loc[start_time_issues, "time_slot"].tolist()
+            logger.warning(
+                f"Failed to parse 'start_time' for entries: {problematic_slots}"
+            )
+
+        if end_time_issues.any():
+            problematic_slots = df.loc[end_time_issues, "time_slot"].tolist()
+            logger.warning(
+                f"Failed to parse 'end_time' for entries: {problematic_slots}"
+            )
+
+        # Drop the original 'time_slot' column
+        df.drop("time_slot", axis=1, inplace=True)
+        logger.debug(
+            "'time_slot' column has been replaced with 'start_time' and 'end_time'."
         )
-        try:
-            df["time_slot"] = df["time_slot"].str.replace(
-                " Uhr", "", regex=False
-            )
-            logger.debug(f"Cleaned time_slot values: {df['time_slot'].head()}")
+    except Exception as e:
+        logger.error(f"Error splitting 'time_slot' column: {e}", exc_info=True)
 
-            time_splits = df["time_slot"].str.split(
-                pat=" - ", n=1, expand=True
-            )
-
-            if time_splits.shape[1] < 2:
-                logger.warning(
-                    "Some 'time_slot' entries do not have an end time. Filling with NaT."
-                )
-                time_splits[1] = pd.NA
-
-            df["start_time"] = pd.to_datetime(
-                time_splits[0].str.strip(), format="%H.%M", errors="coerce"
-            ).dt.time
-            df["end_time"] = pd.to_datetime(
-                time_splits[1].str.strip(), format="%H.%M", errors="coerce"
-            ).dt.time
-
-            if df["start_time"].isna().any():
-                problematic_slots = df[df["start_time"].isna()]["time_slot"]
-                logger.warning(
-                    f"Failed to parse 'start_time' for some entries: {problematic_slots.tolist()}"
-                )
-
-            if df["end_time"].isna().any():
-                problematic_slots = df[df["end_time"].isna()]["time_slot"]
-                logger.warning(
-                    f"Failed to parse 'end_time' for some entries: {problematic_slots.tolist()}"
-                )
-
-            idx = df.columns.get_loc("time_slot")
-            df.insert(idx, "start_time", df.pop("start_time"))
-            df.insert(idx + 1, "end_time", df.pop("end_time"))
-            df.drop("time_slot", axis=1, inplace=True)
-
-            logger.info(
-                "Successfully replaced 'time_slot' with 'start_time' and 'end_time'."
-            )
-        except Exception as e:
-            logger.error(f"Error processing 'time_slot': {e}")
-            logger.debug(
-                f"Current time_slot values (post-error): {df['time_slot'].head()}"
-            )
-    else:
-        logger.warning(
-            "The column 'time_slot' does not exist in the DataFrame. No action taken."
-        )
     return df
 
 
-def format_date(df, current_year):
+def format_date(df: pd.DataFrame, current_year: int) -> pd.DataFrame:
     """
     Format the 'date' column by replacing month names and adding the year.
 
@@ -687,29 +635,32 @@ def format_date(df, current_year):
         "Dez": "Dec",
     }
     current_year_str = str(current_year)
-    logger.info(f"Starting to format dates with the year: {current_year_str}")
+    logger.info(f"Formatting 'date' column with year: {current_year_str}")
 
     try:
         df["date"] = df["date"].replace(month_mapping, regex=True)
         df["date"] = pd.to_datetime(
-            df["date"].astype(str) + " " + current_year_str,
+            df["date"].astype(str) + f" {current_year_str}",
             format="%d. %b %Y",
             errors="coerce",
         )
 
         if df["date"].isna().any():
-            failed_dates = df[df["date"].isna()]["date"]
+            failed_dates = df.loc[df["date"].isna(), "date"].tolist()
             logger.warning(
-                f"Some dates were not parsed correctly and have been set to NaT. Check these entries: {failed_dates.to_list()}"
+                f"Some dates could not be parsed and are set to NaT: {failed_dates}"
             )
 
-        logger.info("Dates formatted successfully.")
+        logger.debug("'date' column has been formatted.")
     except Exception as e:
-        logger.error(f"Error formatting dates: {e}")
+        logger.error(f"Error formatting 'date' column: {e}", exc_info=True)
+
     return df
 
 
-def validate_dates(df, start_year, end_year):
+def validate_dates(
+    df: pd.DataFrame, start_year: int, end_year: int
+) -> pd.DataFrame:
     """
     Validate that dates fall within the specified year range.
 
@@ -721,36 +672,60 @@ def validate_dates(df, start_year, end_year):
     Returns:
         pd.DataFrame: DataFrame with dates validated.
     """
-    initial_count = df.shape[0]
-    df = df[
-        (df["date"].dt.year >= start_year) & (df["date"].dt.year <= end_year)
-    ]
-    final_count = df.shape[0]
-    logger.info(
-        f"Validated dates. Rows before: {initial_count}, after: {final_count}"
-    )
+    try:
+        initial_count = len(df)
+        df = df[df["date"].dt.year.between(start_year, end_year)]
+        final_count = len(df)
+        logger.info(
+            f"Validated dates. Rows before: {initial_count}, after: {final_count}."
+        )
+    except Exception as e:
+        logger.error(f"Error validating dates: {e}", exc_info=True)
     return df
 
 
-def get_year(pdf_path):
+def get_year(pdf_path: str) -> Optional[int]:
     """
-    Extract the year from the PDF using the extract_version function.
+    Extract the year from the PDF using the extract_version_from_pdf function.
 
     Args:
         pdf_path (str): Path to the PDF file.
 
     Returns:
-        int or None: Extracted year or None if not found.
+        Optional[int]: Extracted year or None if not found.
     """
     try:
-        version_datetime = extract_version(pdf_path)
-        if version_datetime:
-            logger.debug(f"Extracted version year: {version_datetime.year}")
-            return version_datetime.year
-        logger.warning("Version datetime not found.")
-        return None
+        version_data = extract_version_from_pdf(pdf_path)
+
+        if isinstance(version_data, str):
+            logger.debug(
+                "Extracted version data is a string. Attempting regex search for year."
+            )
+            year_match = re.search(r"\b(20\d{2})\b", version_data)
+            if year_match:
+                year = int(year_match.group(1))
+                logger.info(f"Extracted year from string: {year}")
+                return year
+            else:
+                logger.warning(
+                    f"No valid year found in version string: '{version_data}'"
+                )
+                return None
+
+        elif isinstance(version_data, datetime):
+            year = version_data.year
+            logger.info(f"Extracted year from datetime object: {year}")
+            return year
+
+        else:
+            logger.warning(
+                "Version data is neither a string nor a datetime object."
+            )
+            return None
     except Exception as e:
-        logger.error(f"Error extracting year: {e}")
+        logger.error(
+            f"Error extracting year from PDF '{pdf_path}': {e}", exc_info=True
+        )
         return None
 
 
@@ -759,7 +734,7 @@ def get_year(pdf_path):
 # ================================
 
 
-def openai_parser(api_key, details):
+def openai_parser(api_key: str, details: str) -> List[Dict[str, Any]]:
     """
     Parse complex multi-line timetable event details into structured JSON using OpenAI API.
 
@@ -768,9 +743,9 @@ def openai_parser(api_key, details):
         details (str): Raw event details to parse.
 
     Returns:
-        list: List of parsed event dictionaries.
+        List[Dict[str, Any]]: List of parsed event dictionaries.
     """
-    client = OpenAI(api_key=api_key)
+    openai.api_key = api_key
     failure_response = [
         {
             "course": "!!! AiParsing Failure!!!",
@@ -779,70 +754,82 @@ def openai_parser(api_key, details):
             "details": "",
         }
     ]
+    system_prompt = (
+        "You are provided with event details from a timetable, including course names, lecturers, "
+        "locations, and additional details. Your task is to parse these details into a structured JSON "
+        "format compliant with RFC8259, where each JSON object includes only 'course', 'lecturer', 'location', "
+        "and 'details'. The 'lecturer' field should be an array containing multiple names, regardless of their "
+        "position in the input. Here is a list of some existing names: ['Herth', 'Wetter', 'Battermann', "
+        "'P. Wette', 'Luhmeyer', 'Schünemann', 'P. Wette', 'Simon']. Ensure no additional fields are introduced. "
+        "For example, if the input is 'Programmieren in C, P. Wette/ D 216 Praktikum 1, Gr. B Simon "
+        "Wechselstromtechnik Battermann/ D 221 Praktikum 2, Gr. A Schünemann', the output should be "
+        "[{'course': 'Programmieren in C', 'lecturer': ['P. Wette', 'Simon'], 'location': 'D 216', 'details': 'Praktikum 1, Gr. B'}, "
+        "{'course': 'Wechselstromtechnik', 'lecturer': ['Battermann', 'Schünemann'], 'location': 'D 221', 'details': 'Praktikum 2, Gr. A'}]. "
+        "Correctly identify and include all lecturers, even if they appear after location or detail descriptions, ensuring accurate and comprehensive "
+        "data representation in each event."
+    )
+
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are provided with event details from a timetable, including course names, lecturers, "
-                "locations, and additional details. Your task is to parse these details into a structured JSON "
-                "format compliant with RFC8259, where each JSON object includes only 'course', 'lecturer', 'location', "
-                "and 'details'. The 'lecturer' field should be an array containing multiple names, regardless of their "
-                "position in the input. Here is a list of some existing names: ['Herth', 'Wetter', 'Battermann', "
-                "'P. Wette', 'Luhmeyer', 'Schünemann', 'P. Wette', 'Simon']. Ensure no additional fields are introduced. "
-                "For example, if the input is 'Programmieren in C, P. Wette/ D 216 Praktikum 1, Gr. B Simon "
-                "Wechselstromtechnik Battermann/ D 221 Praktikum 2, Gr. A Schünemann', the output should be "
-                "[{'course': 'Programmieren in C', 'lecturer': ['P. Wette', 'Simon'], 'location': 'D 216', 'details': 'Praktikum 1, Gr. B'}, "
-                "{'course': 'Wechselstromtechnik', 'lecturer': ['Battermann', 'Schünemann'], 'location': 'D 221', 'details': 'Praktikum 2, Gr. A'}]. "
-                "Correctly identify and include all lecturers, even if they appear after location or detail descriptions, ensuring accurate and comprehensive "
-                "data representation in each event."
-            ),
-        },
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": details},
     ]
 
     max_retries = 3
-    for attempt in range(max_retries):
+    for attempt in range(1, max_retries + 1):
         try:
-            response = client.chat.completions.create(
+            logger.info(f"OpenAI parsing attempt {attempt} of {max_retries}.")
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=messages,
                 temperature=0,
                 max_tokens=512,
                 top_p=1,
             )
-            structured_response = response.choices[0].message.content
+            structured_response = response.choices[0].message.content.strip()
+
             if not structured_response:
                 logger.warning(
-                    "Received no content to parse, attempting retry."
+                    "Received empty response from OpenAI. Retrying..."
                 )
                 continue
 
             structured_data = json.loads(structured_response)
-            logger.info("Successfully parsed the response.")
+            logger.info("Successfully parsed response from OpenAI.")
 
             if isinstance(structured_data, dict):
                 return [structured_data]
             elif isinstance(structured_data, list):
                 return structured_data
             else:
-                logger.warning("Parsed data is not a list or dict.")
+                logger.warning(
+                    "Parsed data is neither a list nor a dict. Returning failure response."
+                )
                 return failure_response
 
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Retry {attempt + 1}/{max_retries}: Failed to parse JSON response. {str(e)} Trying again."
+                f"Attempt {attempt}: JSON decode error: {e}. Retrying..."
             )
-        except (IndexError, KeyError, Exception) as e:
+        except openai.error.OpenAIError as e:
             logger.error(
-                f"Error during parsing: {e}. Attempt {attempt + 1} of {max_retries}."
+                f"Attempt {attempt}: OpenAI API error: {e}. Retrying..."
             )
-            if attempt == max_retries - 1:
-                logger.critical(
-                    "Error parsing details after several attempts, please check the input format and try again."
-                )
-                return failure_response
+        except Exception as e:
+            logger.error(
+                f"Attempt {attempt}: Unexpected error: {e}. Retrying...",
+                exc_info=True,
+            )
 
-    logger.error("Failed to obtain a valid response after multiple attempts.")
+        # Exponential backoff
+        backoff_time = 2**attempt
+        logger.info(f"Waiting for {backoff_time} seconds before retrying...")
+        import time
+
+        time.sleep(backoff_time)
+
+    logger.critical(
+        "Failed to parse details using OpenAI after multiple attempts."
+    )
     return failure_response
 
 
@@ -851,7 +838,7 @@ def openai_parser(api_key, details):
 # ================================
 
 
-def convert_raw_event_data_to_list(df):
+def convert_raw_event_data_to_list(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert the 'raw_details' column from strings to lists and clean special characters.
 
@@ -862,22 +849,27 @@ def convert_raw_event_data_to_list(df):
         pd.DataFrame: DataFrame with 'raw_details' as lists.
     """
     try:
-        df["raw_details"] = df["raw_details"].str.split("\n")
-        df["raw_details"] = df["raw_details"].apply(
-            lambda x: [detail.strip().replace("\xa0", " ") for detail in x]
-            if isinstance(x, list)
-            else x
+        logger.info(
+            "Converting 'raw_details' from strings to lists and cleaning special characters."
         )
-        logger.debug(
-            "Converted 'raw_details' to lists and cleaned special characters."
+        df["raw_details"] = (
+            df["raw_details"]
+            .str.split("\n")
+            .apply(
+                lambda x: [detail.strip().replace("\xa0", " ") for detail in x]
+                if isinstance(x, list)
+                else x
+            )
         )
-        return df
+        logger.debug("'raw_details' column has been converted to lists.")
     except Exception as e:
-        logger.error(f"Error converting raw details to list: {e}")
-        return df
+        logger.error(
+            f"Error converting 'raw_details' to lists: {e}", exc_info=True
+        )
+    return df
 
 
-def check_multievent(df):
+def check_multievent(df: pd.DataFrame) -> pd.DataFrame:
     """
     Check and flag rows that contain multiple events.
 
@@ -888,18 +880,19 @@ def check_multievent(df):
         pd.DataFrame: DataFrame with 'multi_event' flag.
     """
     try:
+        logger.info("Checking for rows with multiple events.")
         df["multi_event"] = df["raw_details"].apply(
-            lambda x: len(x) > 4 if isinstance(x, list) else False
+            lambda x: isinstance(x, list) and len(x) > 4
         )
         multi_event_count = df["multi_event"].sum()
-        logger.info(f"Number of multi-event rows: {multi_event_count}")
-        return df
+        logger.info(f"Found {multi_event_count} rows with multiple events.")
     except Exception as e:
-        logger.error(f"Error checking for multiple events: {e}")
-        return df
+        logger.error(f"Error checking for multiple events: {e}", exc_info=True)
+        df["multi_event"] = False
+    return df
 
 
-def process_data(df, api_key):
+def process_data(df: pd.DataFrame, api_key: str) -> pd.DataFrame:
     """
     Process the DataFrame to extract structured event data.
 
@@ -919,58 +912,72 @@ def process_data(df, api_key):
         "location",
         "details",
     ]
-    processed_events = []
+    processed_events: List[Dict[str, Any]] = []
 
-    for _, row in df.iterrows():
-        raw_details = row["raw_details"]
-        logger.info(f"Processing row: {row.to_dict()}")
+    logger.info("Starting processing of event data.")
+    for index, row in df.iterrows():
+        raw_details = row.get("raw_details")
+        logger.debug(f"Processing row {index}: {row.to_dict()}")
 
-        if row["multi_event"]:
-            logger.info("Detected multi-event row, invoking openai_parser.")
-            details_string = ", ".join(raw_details)
+        if row.get("multi_event"):
+            logger.info(
+                f"Row {index} identified as multi-event. Invoking OpenAI parser."
+            )
+            details_string = ", ".join(filter(None, raw_details))
             parsed_events = openai_parser(api_key, details_string)
-            logger.info(f"Parsed events: {parsed_events}")
+            logger.debug(f"Parsed events for row {index}: {parsed_events}")
 
-            if isinstance(parsed_events, list):
-                for event in parsed_events:
-                    if isinstance(event, dict):
-                        processed_event = {
-                            "date": row["date"],
-                            "start_time": row["start_time"],
-                            "end_time": row["end_time"],
-                            "course": event.get("course", ""),
-                            "lecturer": event.get("lecturer", []),
-                            "location": event.get("location", ""),
-                            "details": event.get("details", ""),
-                        }
-                        processed_events.append(processed_event)
-                        logger.info(f"Added parsed event: {processed_event}")
-            else:
-                logger.warning(f"Parsed events is not a list: {parsed_events}")
+            for event in parsed_events:
+                if isinstance(event, dict):
+                    processed_event = {
+                        "date": row.get("date"),
+                        "start_time": row.get("start_time"),
+                        "end_time": row.get("end_time"),
+                        "course": event.get("course", "Unknown Course"),
+                        "lecturer": event.get(
+                            "lecturer", ["Unknown Lecturer"]
+                        ),
+                        "location": event.get("location", "Unknown Location"),
+                        "details": event.get("details", ""),
+                    }
+                    processed_events.append(processed_event)
+                    logger.info(
+                        f"Added parsed event from row {index}: {processed_event}"
+                    )
+                else:
+                    logger.warning(
+                        f"Unexpected event format in row {index}: {event}"
+                    )
         else:
-            event = {
-                "date": row["date"],
-                "start_time": row["start_time"],
-                "end_time": row["end_time"],
-                "course": raw_details[0]
-                if len(raw_details) > 0
-                else "Unknown Course",
-                "lecturer": [raw_details[1]]
-                if len(raw_details) > 1
-                else ["Unknown Lecturer"],
-                "location": raw_details[2]
-                if len(raw_details) > 2
-                else "Unknown Location",
-                "details": raw_details[3] if len(raw_details) > 3 else "",
-            }
-
-            processed_events.append(event)
-            logger.info(f"Added single event: {event}")
+            if isinstance(raw_details, list):
+                event = {
+                    "date": row.get("date"),
+                    "start_time": row.get("start_time"),
+                    "end_time": row.get("end_time"),
+                    "course": raw_details[0]
+                    if len(raw_details) > 0
+                    else "Unknown Course",
+                    "lecturer": [raw_details[1]]
+                    if len(raw_details) > 1
+                    else ["Unknown Lecturer"],
+                    "location": raw_details[2]
+                    if len(raw_details) > 2
+                    else "Unknown Location",
+                    "details": raw_details[3] if len(raw_details) > 3 else "",
+                }
+                processed_events.append(event)
+                logger.info(f"Added single event from row {index}: {event}")
+            else:
+                logger.warning(
+                    f"Expected 'raw_details' to be a list in row {index}, got {type(raw_details)}."
+                )
 
     processed_df = pd.DataFrame(
         processed_events, columns=processed_events_columns
     )
-    logger.info("Completed processing all rows.")
+    logger.info(
+        f"Processing completed. Total processed events: {len(processed_df)}"
+    )
     return processed_df
 
 
@@ -985,7 +992,11 @@ class PdfParser:
     """
 
     def __init__(
-        self, api_key, start_year=2024, end_year=2025, output_dir="output"
+        self,
+        api_key: str,
+        start_year: int = 2024,
+        end_year: int = 2025,
+        output_dir: str = "output",
     ):
         """
         Initialize the PdfParser.
@@ -1004,10 +1015,16 @@ class PdfParser:
         # Ensure the output directory exists
         os.makedirs(self.output_dir, exist_ok=True)
         logger.debug(
-            f"Initialized PdfParser with output directory: {self.output_dir}"
+            f"PdfParser initialized with output directory: {self.output_dir}"
         )
 
-    def parse_pdf(self, pdf_path, save_raw=False, save_csv_events=False):
+    def parse_pdf(
+        self,
+        pdf_path: str,
+        save_raw: bool = False,
+        save_csv_events: bool = False,
+        save_json_events: bool = True,
+    ) -> Optional[pd.DataFrame]:
         """
         Parse the PDF and extract structured event data.
 
@@ -1017,129 +1034,107 @@ class PdfParser:
             save_csv_events (bool, optional): Whether to save the events DataFrame as CSV. Defaults to False.
 
         Returns:
-            pd.DataFrame or None: Structured event DataFrame or None if processing fails.
+            Optional[pd.DataFrame]: Structured event DataFrame or None if processing fails.
         """
-        logger.info(f"Starting PDF parsing for: {pdf_path}")
-        raw_data = extract_tables(pdf_path)
+        logger.info(f"Initiating parsing process for PDF: {pdf_path}")
+        raw_tables = extract_tables(pdf_path)
 
-        if raw_data:
-            if save_raw:
-                save_raw_tables(raw_data, self.output_dir)
-
-            to_df = convert_tablelist_to_dataframe(raw_data)
-            df = melt_df(to_df)
-            df = forward_fill_dates(df)
-            df = df[df["raw_details"] != ""]
-            df = clean_special_chars(df)
-            df = clean_time_slot(df)
-            df = split_time_slot(df)
-            df = convert_raw_event_data_to_list(df)
-            year = get_year(pdf_path)
-
-            if year:
-                df = format_date(df, year)
-                df = validate_dates(
-                    df, start_year=self.start_year, end_year=self.end_year
-                )
-            else:
-                logger.warning(
-                    "Year information is missing. Skipping date formatting."
-                )
-
-            df = df.sort_values(by=["date", "start_time"])
-            df = check_multievent(df)
-
-            if save_csv_events:
-                # Generate a dynamic CSV filename based on the PDF filename
-                base_name = os.path.splitext(os.path.basename(pdf_path))[0]
-                output_csv_filename = f"{base_name}_events.csv"
-                output_csv_path = os.path.join(
-                    self.output_dir, output_csv_filename
-                )
-
-                save_to_csv(df, output_csv_path)
-                logger.info(f"Final DataFrame saved to {output_csv_path}")
-
-            logger.info("PDF parsing completed successfully.")
-            return df
-        else:
-            logger.error(f"Failed to create DataFrame from PDF: {pdf_path}")
+        if not raw_tables:
+            logger.error(f"No tables extracted from PDF: {pdf_path}")
             return None
 
+        if save_raw:
+            logger.info("Saving raw tables as per user request.")
+            save_raw_tables(raw_tables, self.output_dir)
 
-# ================================
-# Main Execution Block
-# ================================
+        df = convert_tablelist_to_dataframe(raw_tables)
+        if df.empty:
+            logger.error(
+                "Conversion resulted in an empty DataFrame. Aborting processing."
+            )
+            return None
 
-if __name__ == "__main__":
-    # Example usage
-    api_key = load_config("config/config.yaml").get("api_key")
-    pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
+        df = melt_df(df)
+        df = forward_fill_dates(df)
+        df = df[df["raw_details"].notna() & (df["raw_details"] != "")]
+        df = clean_special_chars(df)
+        df = clean_time_slot(df)
+        df = split_time_slot(df)
+        df = convert_raw_event_data_to_list(df)
+        year = get_year(pdf_path)
 
-    parser = PdfParser(api_key=api_key, output_dir="output")
+        if year:
+            df = format_date(df, year)
+            df = validate_dates(
+                df, start_year=self.start_year, end_year=self.end_year
+            )
+        else:
+            logger.warning("Year extraction failed. Skipping date formatting.")
+
+        df = df.sort_values(by=["date", "start_time"]).reset_index(drop=True)
+        df = check_multievent(df)
+
+        if save_csv_events:
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            output_csv_filename = f"{base_name}_events.csv"
+            output_csv_path = os.path.join(
+                self.output_dir, output_csv_filename
+            )
+            try:
+                save_to_csv(df, output_csv_path)
+                logger.info(f"Processed events saved to '{output_csv_path}'.")# TODO: Add json
+            except Exception as e:
+                logger.error(
+                    f"Failed to save processed events to CSV: {e}",
+                    exc_info=True,
+                )
+        if save_json_events:
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            output_json_filename = f"{base_name}_events.json"
+            output_json_path = os.path.join(
+                self.output_dir, output_json_filename
+            )
+            try:
+                save_events_to_json(df, output_json_path)
+                logger.info(f"Processed events saved to '{output_json_path}'.")
+            except Exception as e:
+                logger.error(
+                    f"Failed to save processed events to JSON: {e}",
+                    exc_info=True,
+                )
+        logger.info("PDF parsing process completed successfully.")
+        return df
+
+
+def main():
+    # Load configuration
+    config = load_config("/workspaces/py.hsbi-timetable_2.0/config/config.yaml")
+    api_key = config.get("openai", {}).get("api_key")
+    output_dir = config.get("output_dir", "output")
+
+    if not api_key:
+        logger.critical("OpenAI API key not found in the configuration.")
+        return
+
+    # Path to the PDF file
+    pdf_path = "downloads/timetable_elm_3/2024-10-11_09-25-00/Stundenplan WS_2024_2025_ELM 3_Stand 2024-10-11.pdf"
+
+    # Initialize the parser
+    parser = PdfParser(api_key=api_key, output_dir=output_dir)
+
+    # Parse the PDF
     df = parser.parse_pdf(pdf_path, save_raw=False, save_csv_events=True)
 
-    if df is not None:
+    # Check and use the DataFrame
+    if df is not None and not df.empty:
         logger.info("Parsed DataFrame:")
         logger.info(df.head())
     else:
-        logger.error("Parsing failed.")
-
-
-# src/libs/utils.py
-import logging
-import pandas as pd
-import yaml
-import os
-
-logger = logging.getLogger(__name__)
-
-
-def read_csv(input_path):
-    try:
-        df = pd.read_csv(input_path)
-        logging.info(f"Successfully read data from: {input_path}")
-        return df
-    except Exception as e:
-        logging.error(f"Failed to read data from {input_path}: {e}")
-        return None
-
-
-def save_to_csv(df, path):
-    try:
-        # Create the directory if it doesn't exist
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-        df.to_csv(path, index=False)
-        logging.info(f"Data successfully saved to {path}")
-    except Exception as e:
-        logging.error(f"Failed to save data to {path}: {e}")
-
-
-def load_config(filename="config/config.yaml"):
-    """Load config from a YAML file."""
-    with open(filename, "r") as file:
-        # Load the YAML file
-        config = yaml.safe_load(file)
-    return config
-
-
-def save_events_to_json(df, output_path):
-    """Save the extracted events to a JSON file."""
-    try:
-        df.to_json(output_path, orient="records", lines=False)
-        logging.info(f"Successfully saved DataFrame to {output_path}")
-    except Exception as e:
-        logging.error(f"Failed to save DataFrame to JSON: {e}")
+        logger.error("Parsing failed or resulted in an empty DataFrame.")
 
 
 if __name__ == "__main__":
-    # Example usage
-    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
-    output_path = "./output/test_data.csv"
-    save_to_csv(df, output_path)
-    config = load_config()
-    print(config)
+    main()
 
 
 # src/libs/timetable_version.py
@@ -1198,7 +1193,7 @@ def extract_version_from_pdf(pdf_path: str) -> Optional[str]:
                     f"{date_version} {time_version}", "%d.%m.%Y %H:%M"
                 )
                 formatted_datetime = version_datetime.strftime(
-                    "%Y-%m-%d %H:%M:%S"
+                    "%Y-%m-%d_%H-%M-%S"
                 )
 
                 logger.info(
@@ -1216,6 +1211,9 @@ def extract_version_from_pdf(pdf_path: str) -> Optional[str]:
             f"An error occurred while extracting version from '{pdf_file.name}': {e}"
         )
         return None
+
+
+# src/libs/__init__.py
 
 
 # src/libs/update_google_calendar.py
@@ -1300,7 +1298,7 @@ class GoogleCalendarAPI:
             .execute()
         )
         return events_result.get("items", [])
-
+    
     def prepare_event_data(self, event):
         try:
             # Convert timestamp to date
@@ -1308,39 +1306,34 @@ class GoogleCalendarAPI:
             date = datetime.fromtimestamp(date_timestamp / 1000, pytz.utc)
 
             # Combine date with start and end times
-            start_time = datetime.strptime(
-                event["start_time"], "%H:%M:%S"
-            ).time()
+            start_time = datetime.strptime(event["start_time"], "%H:%M:%S").time()
             end_time = datetime.strptime(event["end_time"], "%H:%M:%S").time()
 
             # Localize the datetime objects
             local_tz = pytz.timezone(self.time_zone)
-            start_datetime = local_tz.localize(
-                datetime.combine(date.date(), start_time)
-            )
-            end_datetime = local_tz.localize(
-                datetime.combine(date.date(), end_time)
-            )
+            start_datetime = local_tz.localize(datetime.combine(date.date(), start_time))
+            end_datetime = local_tz.localize(datetime.combine(date.date(), end_time))
 
-            # Ensure lecturer is a list
-            lecturer_field = event["lecturer"]
-            lecturer_list = (
-                json.loads(lecturer_field.replace("'", '"'))
-                if isinstance(lecturer_field, str)
-                else lecturer_field
-            )
+            # Extract course, lecturer, and other details from raw_details
+            raw_details = event.get("raw_details", [])
+            if not raw_details:
+                raise ValueError("raw_details is empty.")
 
-            # Get event details, ensure it's not None
-            details = event.get("details", "")
+            # Assuming the first element is the course name
+            course = raw_details[0].strip()
 
-            # Combine summary and details
-            summary = (
-                f"{event['course']}, {details}" if details else event["course"]
-            )
+            # Assuming the second element is the lecturer's name
+            lecturer = raw_details[1].strip() if len(raw_details) > 1 else "Unknown Lecturer"
+
+            # Combine any additional details into the description
+            additional_details = ", ".join([detail.strip() for detail in raw_details[2:]]) if len(raw_details) > 2 else ""
+
+            # Combine summary and additional details
+            summary = f"{course}" + (f" - {additional_details}" if additional_details else "")
 
             return {
                 "summary": summary,
-                "location": event.get("location", ""),
+                "location": raw_details[2].strip() if len(raw_details) > 2 else "",
                 "start": {
                     "dateTime": start_datetime.isoformat(),
                     "timeZone": self.time_zone,
@@ -1349,7 +1342,7 @@ class GoogleCalendarAPI:
                     "dateTime": end_datetime.isoformat(),
                     "timeZone": self.time_zone,
                 },
-                "description": ", ".join(lecturer_list),
+                "description": lecturer,
             }
         except Exception as e:
             logger.error(f"Error preparing event data: {event} - {e}")
@@ -1439,6 +1432,840 @@ def main(
 
     # Load local events from JSON file
     try:
+        with open("/workspaces/py.hsbi-timetable_2.0/output/Stundenplan WS_2024_2025_ELM 3_Stand 2024-10-11_events.json", "r") as file:
+            local_events = json.load(file)
+            logger.info(f"Found {len(local_events)} events in the timetable.")
+    except json.JSONDecodeError as e:
+        logger.error(f"Error reading final_events.json: {e}")
+        return
+
+    if dry_run:
+        created_events = create_all_events(calendar_api, local_events)
+        save_events_to_csv(created_events, "/workspaces/py.hsbi-timetable_2.0/output/created_events.csv")
+    else:
+        delete_all_events(calendar_api, time_zone)
+        create_all_events(calendar_api, local_events)
+
+
+if __name__ == "__main__":
+    # Example inputs, replace with actual values
+    calendar_id = "a0fd5d4d46978655a3a840648665285da64e2a08e761c5a9b0800fd5730d2024@group.calendar.google.com"
+    time_zone = "Europe/Berlin"
+    api_url = ["https://www.googleapis.com/auth/calendar"]
+    token_json_file = "/workspaces/py.hsbi-timetable_2.0/config/token.json"
+    credential_json_file = "/workspaces/py.hsbi-timetable_2.0/config/client_secret.json"
+    max_results = 2500
+    dry_run = False
+    main(
+        calendar_id,
+        time_zone,
+        api_url,
+        token_json_file,
+        credential_json_file,
+        max_results,
+        dry_run,
+    )
+
+
+# src/modules/log_config.py
+import logging
+
+
+def setup_logger():
+    # Get the root logger
+    logger = logging.getLogger()
+
+    # Configure the basic logging settings only if not already configured
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(filename)s - %(message)s (%(lineno)d)",
+    )
+    # Create a file handler to write logs to a file
+    file_handler = logging.FileHandler("logfile.log")
+    file_handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(filename)s - %(message)s (%(lineno)d)"
+    )
+    file_handler.setFormatter(formatter)
+    # Add the file handler to the logger
+    logger.addHandler(file_handler)
+
+# src/modules/parser_df_to_events.py
+# process_raw_data.py
+
+import pandas as pd
+import logging
+from modules.parser_pdf_to_df import create_df_from_pdf
+from log_config import setup_logger
+from openai_parser import openai_parser
+from helper_functions import save_to_csv, save_events_to_json, load_config
+
+# Set up the logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+########################################################################################
+#                   PARSE THE RAW DETAILS IN A LIST OF DICTIONARIES                    #
+########################################################################################
+
+
+def process_data(df, api_key):
+    processed_events_columns = [
+        "date",
+        "start_time",
+        "end_time",
+        "course",
+        "lecturer",
+        "location",
+        "details",
+    ]
+    processed_events = []
+
+    for _, row in df.iterrows():
+        raw_details = row["raw_details"]
+        logger.info(f"Processing row: {row.to_dict()}")
+        if row["multi_event"]:
+            logger.info("Detected multi-event row, invoking openai_parser.")
+            details_string = ", ".join(raw_details)
+            parsed_events = openai_parser(api_key, details_string)
+            logger.info(f"Parsed events: {parsed_events}")
+            if isinstance(parsed_events, list):  # Ensure parsed_events is a list
+                for event in parsed_events:
+                    if isinstance(event, dict):  # Ensure each event is a dictionary
+                        processed_event = {
+                            "date": row["date"],
+                            "start_time": row["start_time"],
+                            "end_time": row["end_time"],
+                            "course": event.get("course", ""),
+                            "lecturer": event.get("lecturer", []),
+                            "location": event.get("location", ""),
+                            "details": event.get("details", ""),
+                        }
+                        processed_events.append(processed_event)
+                        logger.info(f"Added parsed event: {processed_event}")
+            else:
+                logger.warning(f"Parsed events is not a list: {parsed_events}")
+        else:
+            # event = {
+            #     "date": row["date"],
+            #     "start_time": row["start_time"],
+            #     "end_time": row["end_time"],
+            #     "course": raw_details[0],
+            #     "lecturer": [raw_details[1]],
+            #     "location": raw_details[2],
+            #     "details": raw_details[3] if len(raw_details) > 3 else "",
+            # }
+            event = {
+                "date": row["date"],
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "course": raw_details[0] if len(raw_details) > 0 else "Unknown Course",
+                "lecturer": [raw_details[1]]
+                if len(raw_details) > 1
+                else ["Unknown Lecturer"],
+                "location": raw_details[2]
+                if len(raw_details) > 2
+                else "Unknown Location",
+                "details": raw_details[3] if len(raw_details) > 3 else "",
+            }
+
+            processed_events.append(event)
+            logger.info(f"Added single event: {event}")
+
+    processed_df = pd.DataFrame(processed_events, columns=processed_events_columns)
+    logger.info("Completed processing all rows.")
+    return processed_df
+
+
+if __name__ == "__main__":
+    config = load_config()
+    pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
+    api_key = config.get("api_key")
+    logger.info("Starting PDF to DataFrame conversion.")
+    events = create_df_from_pdf(pdf_path)
+    logger.info("PDF conversion completed. Starting data processing.")
+    df_final = process_data(events, api_key)
+    logger.info("Data processing completed. Saving to JSON and CSV.")
+    save_events_to_json(df_final, "output/final_events.json")
+    save_to_csv(df_final, "output/final_events.csv")
+    logger.info("Data saved successfully.")
+    print(df_final.head())
+
+
+# src/modules/parser_pdf_to_df.py
+# camelot_pdf_to_df.py
+
+import logging
+import os
+import camelot
+import pandas as pd
+from get_timetable_ver import extract_version
+from helper_functions import save_to_csv
+from log_config import setup_logger
+
+setup_logger()
+logger = logging.getLogger(__name__)
+
+def extract_tables(pdf_path):
+    try:
+        logger.info(f"Starting to extract tables from: {pdf_path}")
+        table_list = camelot.read_pdf(pdf_path, flavor="lattice", pages="all")
+        logger.info(f"Successfully extracted {len(table_list)} tables.")
+        return table_list
+    except Exception as e:
+        logger.error(f"Failed to extract tables: {e}")
+        return None
+
+def save_raw_tables(table_list, output_dir):
+    try:
+        if not table_list:
+            logger.warning("No tables to save.")
+            return
+        raw_output_dir = os.path.join(output_dir, "raw_tables")
+        os.makedirs(raw_output_dir, exist_ok=True)
+        logger.info(f"Saving raw tables to directory: {raw_output_dir}")
+
+        for idx, table in enumerate(table_list, start=1):
+            table_filename = os.path.join(raw_output_dir, f"raw_table_{idx}.csv")
+            table.to_csv(table_filename, index=False)
+            logger.debug(f"Saved raw table {idx} to {table_filename}")
+
+        logger.info(f"Successfully saved {len(table_list)} raw tables.")
+    except Exception as e:
+        logger.error(f"Failed to save raw tables: {e}")
+
+def convert_tablelist_to_dataframe(df_tables):
+    try:
+        dataframes = [
+            table.df if i == 0 else table.df.iloc[1:]
+            for i, table in enumerate(df_tables)
+        ]
+        df_final = pd.concat(dataframes, ignore_index=True)
+        new_header = df_final.iloc[0]
+        df_final = df_final[1:]
+        df_final.columns = new_header
+        df_final.drop(df_final.columns[0], axis=1, inplace=True)
+        df_final.rename(columns={df_final.columns[0]: "date"}, inplace=True)
+
+        logger.debug(f"Converted tables to DataFrame with shape: {df_final.shape}")
+        return df_final
+    except Exception as e:
+        logger.error(f"Error converting table list to DataFrame: {e}")
+        return pd.DataFrame()
+
+def melt_df(df):
+    try:
+        df = df.melt(id_vars=["date"], var_name="time_slot", value_name="raw_details")
+        logger.debug(f"DataFrame after melting has shape: {df.shape}")
+        return df
+    except Exception as e:
+        logger.error(f"Error melting DataFrame: {e}")
+        return pd.DataFrame()
+
+def get_year(pdf_path):
+    try:
+        version_datetime = extract_version(pdf_path)
+        if version_datetime:
+            logger.debug(f"Extracted version year: {version_datetime.year}")
+            return version_datetime.year
+        logger.warning("Version datetime not found.")
+        return None
+    except Exception as e:
+        logger.error(f"Error extracting year: {e}")
+        return None
+
+def format_date(df, current_year):
+    month_mapping = {
+        "Jan": "Jan",
+        "Feb": "Feb",
+        "Mär": "Mar",
+        "Apr": "Apr",
+        "Mai": "May",
+        "Jun": "Jun",
+        "Jul": "Jul",
+        "Aug": "Aug",
+        "Sep": "Sep",
+        "Okt": "Oct",
+        "Nov": "Nov",
+        "Dez": "Dec",
+    }
+    current_year_str = str(current_year)
+    logger.info(f"Starting to format dates with the year: {current_year_str}")
+
+    try:
+        df["date"] = df["date"].replace(month_mapping, regex=True)
+        df["date"] = pd.to_datetime(
+            df["date"].astype(str) + " " + current_year_str,
+            format="%d. %b %Y",
+            errors="coerce",
+        )
+
+        if df["date"].isna().any():
+            failed_dates = df[df["date"].isna()]["date"]
+            logger.warning(
+                f"Some dates were not parsed correctly and have been set to NaT. Check these entries: {failed_dates.to_list()}"
+            )
+
+        logger.info("Dates formatted successfully.")
+    except Exception as e:
+        logger.error(f"Error formatting dates: {e}")
+    return df
+
+def clean_special_chars(df):
+    """
+    Clean special characters in the entire DataFrame.
+    """
+    try:
+        df = df.applymap(lambda x: x.replace('\xa0', ' ') if isinstance(x, str) else x)
+        df = df.applymap(lambda x: x.replace('‐', '-') if isinstance(x, str) else x)
+        logger.info("Special characters cleaned successfully.")
+    except Exception as e:
+        logger.error(f"Error cleaning special characters: {e}")
+    return df
+
+def split_time_slot(df):
+    if "time_slot" in df.columns:
+        logger.info("Splitting 'time_slot' column into 'start_time' and 'end_time' and replacing 'time_slot'.")
+        try:
+            df["time_slot"] = df["time_slot"].str.replace(" Uhr", "", regex=False)
+
+            logger.debug(f"Cleaned time_slot values: {df['time_slot'].head()}")
+
+            time_splits = df["time_slot"].str.split(pat=" - ", n=1, expand=True)
+
+            if time_splits.shape[1] < 2:
+                logger.warning("Some 'time_slot' entries do not have an end time. Filling with NaT.")
+                time_splits[1] = pd.NA
+
+            df["start_time"] = pd.to_datetime(
+                time_splits[0].str.strip(), format="%H.%M", errors="coerce"
+            ).dt.time
+            df["end_time"] = pd.to_datetime(
+                time_splits[1].str.strip(), format="%H.%M", errors="coerce"
+            ).dt.time
+
+            if df["start_time"].isna().any():
+                problematic_slots = df[df["start_time"].isna()]["time_slot"]
+                logger.warning(f"Failed to parse 'start_time' for some entries: {problematic_slots.tolist()}")
+
+            if df["end_time"].isna().any():
+                problematic_slots = df[df["end_time"].isna()]["time_slot"]
+                logger.warning(f"Failed to parse 'end_time' for some entries: {problematic_slots.tolist()}")
+
+            idx = df.columns.get_loc("time_slot")
+
+            df.insert(idx, "start_time", df.pop("start_time"))
+            df.insert(idx + 1, "end_time", df.pop("end_time"))
+            df.drop("time_slot", axis=1, inplace=True)
+
+            logger.info("Successfully replaced 'time_slot' with 'start_time' and 'end_time'.")
+        except Exception as e:
+            logger.error(f"Error processing 'time_slot': {e}")
+            logger.debug(f"Current time_slot values (post-error): {df['time_slot'].head()}")
+    else:
+        logger.warning("The column 'time_slot' does not exist in the DataFrame. No action taken.")
+    return df
+
+def convert_raw_event_data_to_list(df):
+    try:
+        df["raw_details"] = df["raw_details"].str.split("\n")
+        df["raw_details"] = df["raw_details"].apply(lambda x: [detail.strip().replace('\xa0', ' ') for detail in x] if isinstance(x, list) else x)
+        logger.debug("Converted 'raw_details' to lists and cleaned special characters.")
+        return df
+    except Exception as e:
+        logger.error(f"Error converting raw details to list: {e}")
+        return df
+
+def check_multievent(df):
+    try:
+        df["multi_event"] = df['raw_details'].apply(
+            lambda x: len(x) > 4 if isinstance(x, list) else False
+        )
+        multi_event_count = df['multi_event'].sum()
+        logger.info(f"Number of multi-event rows: {multi_event_count}")
+        return df
+    except Exception as e:
+        logger.error(f"Error checking for multiple events: {e}")
+        return df
+
+def forward_fill_dates(df):
+    df['date'] = df['date'].fillna(method='ffill')
+    logger.debug("Forward filled missing dates.")
+    return df
+
+def clean_time_slot(df):
+    if "time_slot" in df.columns:
+        df["time_slot"] = df["time_slot"].str.replace(" Uhr", "", regex=False)
+        logger.debug("Cleaned 'time_slot' column.")
+    return df
+
+def validate_dates(df, start_year, end_year):
+    initial_count = df.shape[0]
+    df = df[(df['date'].dt.year >= start_year) & (df['date'].dt.year <= end_year)]
+    final_count = df.shape[0]
+    logger.info(f"Validated dates. Rows before: {initial_count}, after: {final_count}")
+    return df
+
+def create_df_from_pdf(pdf_path, save_raw=False, output_dir="output"):
+    raw_data = extract_tables(pdf_path)
+
+    if raw_data:
+        if save_raw:
+            save_raw_tables(raw_data, output_dir)
+
+        to_df = convert_tablelist_to_dataframe(raw_data)
+        df = melt_df(to_df)
+        df = forward_fill_dates(df)
+        df = df[df["raw_details"] != ""]
+        df = clean_special_chars(df)
+        df = clean_time_slot(df)
+        df = split_time_slot(df)
+        df = convert_raw_event_data_to_list(df)
+        year = get_year(pdf_path)
+        if year:
+            df = format_date(df, year)
+            df = validate_dates(df, start_year=2024, end_year=2025)
+        else:
+            logger.warning("Year information is missing. Skipping date formatting.")
+
+        df = df.sort_values(by=["date", "start_time"])
+        df = check_multievent(df)
+
+        output_csv_path = os.path.join(output_dir, "create_df.csv")
+        save_to_csv(df, output_csv_path)
+        logger.info(f"Final DataFrame saved to {output_csv_path}")
+        return df
+    else:
+        logger.error(f"Failed to create DataFrame from PDF: {pdf_path}")
+        return None
+
+if __name__ == "__main__":
+    pdf_path = "downloads/timetable_1/Stundenplan WS_2024_2025_ELM 3.pdf"
+    df = create_df_from_pdf(pdf_path, save_raw=False)
+
+# src/modules/openai_parser.py
+# openai_parser.py
+
+import json
+import logging
+import os
+from openai import OpenAI
+from helper_functions import load_config
+from log_config import setup_logger
+
+# Set up the logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+def openai_parser(api_key, details):
+    """Parse complex multi-line timetable event details into structured JSON using OpenAI API."""
+    client = OpenAI(api_key=api_key)
+    failure_response = [{
+        "course": "!!! AiParsing Failure!!!",
+        "lecturer": [],
+        "location": "",
+        "details": "",
+    }]
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are provided with event details from a timetable, including course names, lecturers, "
+                "locations, and additional details. Your task is to parse these details into a structured JSON "
+                "format compliant with RFC8259, where each JSON object includes only 'course', 'lecturer', 'location', "
+                "and 'details'. The 'lecturer' field should be an array containing multiple names, regardless of their "
+                "position in the input. Here is a list of some existing names: ['Herth', 'Wetter', 'Battermann', "
+                "'P. Wette', 'Luhmeyer', 'Schünemann', 'P. Wette', 'Simon']. Ensure no additional fields are introduced. "
+                "For example, if the input is 'Programmieren in C, P. Wette/ D 216 Praktikum 1, Gr. B Simon "
+                "Wechselstromtechnik Battermann/ D 221 Praktikum 2, Gr. A Schünemann', the output should be "
+                "[{'course': 'Programmieren in C', 'lecturer': ['P. Wette', 'Simon'], 'location': 'D 216', 'details': 'Praktikum 1, Gr. B'}, "
+                "{'course': 'Wechselstromtechnik', 'lecturer': ['Battermann', 'Schünemann'], 'location': 'D 221', 'details': 'Praktikum 2, Gr. A'}]. "
+                "Correctly identify and include all lecturers, even if they appear after location or detail descriptions, ensuring accurate and comprehensive "
+                "data representation in each event."
+            ),
+        },
+        {"role": "user", "content": details},
+    ]
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                temperature=0,
+                max_tokens=512,
+                top_p=1,
+            )
+            structured_response = response.choices[0].message.content
+            if structured_response is None:
+                logging.warning("Received no content to parse, attempting retry.")
+                continue  # Continue the retry loop if no response content
+            structured_data = json.loads(structured_response)  # Parse the JSON here
+            logging.info("Successfully parsed the response.")
+            if isinstance(structured_data, dict):
+                return [structured_data]  # Ensure it's a list of dictionaries
+            elif isinstance(structured_data, list):
+                return structured_data
+            else:
+                logging.warning("Parsed data is not a list or dict.")
+                return failure_response
+        except json.JSONDecodeError as e:
+            logging.warning(
+                f"Retry {attempt + 1}/{max_retries}: Failed to parse JSON response. {str(e)} Trying again."
+            )
+        except (IndexError, KeyError, Exception) as e:
+            logging.error(
+                f"Error during parsing: {e}. Attempt {attempt + 1} of {max_retries}."
+            )
+            if attempt == max_retries - 1:
+                logging.critical(
+                    "Error parsing details after several attempts, please check the input format and try again."
+                )
+                return failure_response
+
+    logging.error("Failed to obtain a valid response after multiple attempts.")
+    return failure_response
+
+if __name__ == "__main__":
+    # Test the function
+    config = load_config()
+    api_key = config["api_key"]
+    details = "['Programmieren in C,', 'P. Wette/', 'D 216', 'Praktikum 1, Gr. B', 'Simon', 'Wechselstromtechnik', 'Battermann/', 'D 221', 'Praktikum 2, Gr. A', 'Schünemann']"
+    response = openai_parser(api_key, details)
+
+    # Ensure the output directory exists
+    output_dir = "./output"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Define the filename for the JSON file
+    json_filename = os.path.join(output_dir, "response.json")
+
+    # Save the 'response' as a JSON file
+    with open(json_filename, "w") as json_file:
+        json.dump(response, json_file, indent=4)
+
+    print(response)
+
+# src/modules/__init__.py
+
+
+# src/modules/helper_functions.py
+# helper_functions.py
+
+import logging
+import pandas as pd
+import yaml
+import os
+from log_config import setup_logger
+# Set up the logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+def read_csv(input_path):
+    try:
+        df = pd.read_csv(input_path)
+        logging.info(f"Successfully read data from: {input_path}")
+        return df
+    except Exception as e:
+        logging.error(f"Failed to read data from {input_path}: {e}")
+        return None
+
+
+def save_to_csv(df, path):
+    try:
+        # Create the directory if it doesn't exist
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        df.to_csv(path, index=False)
+        logging.info(f"Data successfully saved to {path}")
+    except Exception as e:
+        logging.error(f"Failed to save data to {path}: {e}")
+
+
+def load_config(filename="config/config.yaml"):
+    """Load config from a YAML file."""
+    with open(filename, "r") as file:
+        # Load the YAML file
+        config = yaml.safe_load(file)
+    return config
+
+def save_events_to_json(df, output_path):
+    """Save the extracted events to a JSON file."""
+    try:
+        df.to_json(output_path, orient="records", lines=False)
+        logging.info(f"Successfully saved DataFrame to {output_path}")
+    except Exception as e:
+        logging.error(f"Failed to save DataFrame to JSON: {e}")
+
+
+if __name__ == "__main__":
+    # Example usage
+    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6]})
+    output_path = "./output/test_data.csv"
+    save_to_csv(df, output_path)
+    config = load_config()
+    print(config)
+
+
+# src/modules/get_timetable_ver.py
+# get_timetable_ver.py
+
+import re
+import logging
+import fitz  # PyMuPDF
+from pathlib import Path
+from datetime import datetime
+import csv
+
+# Set up the logger
+from log_config import setup_logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+
+def extract_version(pdf_path):
+    """
+    Extract the version date and time from the first page of a PDF.
+
+    Args:
+    pdf_path (str): Path to the PDF file.
+
+    Returns:
+    datetime or None: The extracted version as a datetime object, or None if not found.
+    """
+    try:
+        logging.info(f"Starting to extract version from: {pdf_path}")
+        pdf_document = fitz.open(pdf_path)
+        first_page_text = pdf_document[0].get_text()  # type: ignore
+        version_pattern = r"Version:\s*(\d{2}\.\d{2}\.\d{4}),\s*(\d{2}:\d{2})\s*Uhr"
+        match = re.search(version_pattern, first_page_text)
+        if match:
+            date_version = match.group(1)  # Example: "17.04.2024"
+            time_version = match.group(2)  # Example: "10:01"
+            version_datetime = datetime.strptime(
+                f"{date_version} {time_version}", "%d.%m.%Y %H:%M"
+            )
+            logging.info(f"Extracted version: {version_datetime}")
+            return version_datetime
+        else:
+            logging.warning("Version not found in the PDF.")
+            return None
+    except Exception as e:
+        logging.error(f"Failed to extract version due to an error: {e}")
+        return None
+
+
+def log_pdf_versions(downloads_path, csv_file_path):
+    downloads_dir = Path(downloads_path)
+    pdf_files = list(downloads_dir.glob("*.pdf"))
+
+    with open(csv_file_path, "a", newline="") as csvfile:
+        csv_writer = csv.writer(csvfile)
+
+        if csvfile.tell() == 0:
+            csv_writer.writerow(["Timestamp", "Version", "File"])
+
+        for pdf_file in pdf_files:
+            version_datetime = extract_version(pdf_file)
+
+            if version_datetime:
+                csv_writer.writerow(
+                    [
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        version_datetime.strftime("%Y-%m-%d %H:%M:%S"),
+                        pdf_file.name,
+                    ]
+                )
+            else:
+                print(f"Failed to extract version from {pdf_file.name}.")
+
+
+if __name__ == "__main__":
+    log_pdf_versions("downloads", "output/version_log.csv")
+
+
+# src/modules/update_google_calendar.py
+import os
+import json
+import logging
+import csv
+from datetime import datetime, timedelta
+import pytz
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from log_config import setup_logger  # Set up the logger
+
+# Set up logging
+setup_logger()
+logger = logging.getLogger(__name__)
+
+# Constants for authentication and calendar settings
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
+TOKEN_JSON_FILE = "config/token.json"
+CREDENTIALS_JSON_FILE = "config/client_secret.json"
+CALENDAR_ID_ELM3 = "9a901e48af79cd47cb67c184c642400a25fc301ad3bacf45ae6e003672174209@group.calendar.google.com"
+CALENDAR_ID_ELM5 = "dd947828be3d70701a1373643ece5ef5bee930d44c14fa2bf7ba3dc9004d603e@group.calendar.google.com"
+TIME_ZONE = "Europe/Berlin"
+MAX_RESULTS = 2500
+
+
+class GoogleCalendarAPI:
+    def __init__(self, calendar_id, time_zone, dry_run=False):
+        self.calendar_id = calendar_id
+        self.time_zone = time_zone
+        self.dry_run = dry_run
+        if not dry_run:
+            self.service = self.authenticate()
+
+    def authenticate(self):
+        creds = None
+        if os.path.exists(TOKEN_JSON_FILE):
+            creds = Credentials.from_authorized_user_file(TOKEN_JSON_FILE, SCOPES)
+        
+        # Handle token refresh or re-authentication
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                try:
+                    creds.refresh(Request())
+                except Exception as e:
+                    logger.error(f"Failed to refresh token: {e}")
+                    os.remove(TOKEN_JSON_FILE)  # Remove invalid token
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_JSON_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+                with open(TOKEN_JSON_FILE, "w") as token:
+                    token.write(creds.to_json())
+
+        logger.info("Authenticated with Google Calendar API.")
+        return build("calendar", "v3", credentials=creds)
+
+    def fetch_events(self, start_date, end_date):
+        if self.dry_run:
+            logger.info("Dry run mode: Not fetching remote events.")
+            return []
+        
+        logger.info(f"Fetching events between {start_date} and {end_date}")
+        events_result = (
+            self.service.events()
+            .list(
+                calendarId=self.calendar_id,
+                timeMin=start_date.isoformat(),
+                timeMax=end_date.isoformat(),
+                maxResults=MAX_RESULTS,
+                singleEvents=True,
+                orderBy="startTime",
+                timeZone=self.time_zone,
+            )
+            .execute()
+        )
+        return events_result.get("items", [])
+
+    def prepare_event_data(self, event):
+        try:
+            # Convert timestamp to date
+            date_timestamp = event["date"]
+            date = datetime.fromtimestamp(date_timestamp / 1000, pytz.utc)
+
+            # Combine date with start and end times
+            start_time = datetime.strptime(event["start_time"], "%H:%M:%S").time()
+            end_time = datetime.strptime(event["end_time"], "%H:%M:%S").time()
+
+            # Localize the datetime objects
+            local_tz = pytz.timezone(TIME_ZONE)
+            start_datetime = local_tz.localize(datetime.combine(date.date(), start_time))
+            end_datetime = local_tz.localize(datetime.combine(date.date(), end_time))
+
+            # Ensure lecturer is a list
+            lecturer_field = event["lecturer"]
+            lecturer_list = json.loads(lecturer_field.replace("'", '"')) if isinstance(lecturer_field, str) else lecturer_field
+
+            # Get event details, ensure it's not None
+            details = event.get("details", "")
+
+            # Combine summary and details
+            summary = f"{event['course']}, {details}" if details else event['course']
+
+            return {
+                "summary": summary,
+                "location": event.get("location", ""),
+                "start": {
+                    "dateTime": start_datetime.isoformat(),
+                    "timeZone": TIME_ZONE,
+                },
+                "end": {
+                    "dateTime": end_datetime.isoformat(),
+                    "timeZone": TIME_ZONE,
+                },
+                "description": ", ".join(lecturer_list),
+            }
+        except Exception as e:
+            logger.error(f"Error preparing event data: {event} - {e}")
+            return None
+
+    def create_event(self, event):
+        event_data = self.prepare_event_data(event)
+        if event_data:
+            if self.dry_run:
+                logger.info(f"Dry run mode: Prepared event data: {event_data}")
+                return event_data
+            else:
+                created_event = self.service.events().insert(calendarId=self.calendar_id, body=event_data).execute()
+                logger.info(f'Event created: {created_event["summary"]}')
+                return created_event
+        else:
+            logger.error("Failed to create event due to preparation error.")
+
+    def delete_event(self, event_id):
+        if self.dry_run:
+            logger.info(f"Dry run mode: Would delete event with ID: {event_id}")
+        else:
+            self.service.events().delete(calendarId=self.calendar_id, eventId=event_id).execute()
+            logger.info(f"Deleted event with ID: {event_id}")
+
+
+def create_all_events(calendar_api, local_events):
+    created_events = []
+    for event in local_events:
+        created_event = calendar_api.create_event(event)
+        if created_event:
+            created_events.append(created_event)
+    return created_events
+
+
+def delete_all_events(calendar_api):
+    start_date = datetime.now(pytz.timezone(TIME_ZONE)) - timedelta(days=300)
+    end_date = datetime.now(pytz.timezone(TIME_ZONE)) + timedelta(days=300)
+    logger.info(f"Fetching events between {start_date} and {end_date}")
+    
+    remote_events = calendar_api.fetch_events(start_date, end_date)
+    for event in remote_events:
+        calendar_api.delete_event(event["id"])
+    logger.info("All events deleted successfully.")
+
+
+def save_events_to_csv(events, filename):
+    if not events:
+        logger.warning("No events to save.")
+        return
+    
+    keys = events[0].keys()
+    with open(filename, "w", newline="") as output_file:
+        dict_writer = csv.DictWriter(output_file, fieldnames=keys)
+        dict_writer.writeheader()
+        dict_writer.writerows(events)
+    
+    logger.info(f"Events saved to {filename}.")
+
+
+def main(dry_run=False):
+    calendar_api = GoogleCalendarAPI(CALENDAR_ID_ELM3, TIME_ZONE, dry_run)
+
+    # Load local events from JSON file
+    try:
         with open("output/final_events.json", "r") as file:
             local_events = json.load(file)
             logger.info(f"Found {len(local_events)} events in the timetable.")
@@ -1450,27 +2277,131 @@ def main(
         created_events = create_all_events(calendar_api, local_events)
         save_events_to_csv(created_events, "output/dry_run_output.csv")
     else:
-        delete_all_events(calendar_api, time_zone)
+        delete_all_events(calendar_api)
         create_all_events(calendar_api, local_events)
 
 
 if __name__ == "__main__":
-    # Example inputs, replace with actual values
-    calendar_id = "9a901e48af79cd47cb67c184c642400a25fc301ad3bacf45ae6e003672174209@group.calendar.google.com"
-    time_zone = "Europe/Berlin"
-    api_url = ["https://www.googleapis.com/auth/calendar"]
-    token_json_file = "config/token.json"
-    credential_json_file = "config/client_secret.json"
-    max_results = 2500
-    dry_run = True
-    main(
-        calendar_id,
-        time_zone,
-        api_url,
-        token_json_file,
-        credential_json_file,
-        max_results,
-        dry_run,
-    )
+    dry_run = False  # Set to True for a dry run, False for actual operation
+    main(dry_run)
 
+# src/modules/download_webdav_timetables.py
+import logging
+from webdav3.client import Client
+import os
+from helper_functions import load_config
+from log_config import setup_logger
+
+# Set up the logger
+setup_logger()
+logger = logging.getLogger(__name__)
+
+def sync_timetables(urls: dict, credentials: dict, keywords: dict, dry_run: bool, output_path: str = "./downloads/") -> None:
+    """
+    Sync timetables from multiple WebDAV URLs, downloading only PDF files that contain specified keywords.
+
+    Args:
+        urls (dict): A dictionary where keys are identifiers and values are WebDAV URLs.
+        credentials (dict): A dictionary containing 'username' and 'password'.
+        keywords (dict): A dictionary mapping each URL identifier to a keyword.
+        dry_run (bool): If True, simulate actions without making actual changes.
+        output_path (str, optional): Base directory to download files into. Defaults to "./downloads/".
+    """
+    # Create base output directory if it doesn't exist
+    os.makedirs(output_path, exist_ok=True)
+    logger.info(f"Base download directory set to: {output_path}")
+
+    for key, url in urls.items():
+        logger.info(f"Processing URL for '{key}': {url}")
+
+        # Retrieve keyword for the current URL
+        url_keyword = keywords.get(key, "")
+        if not isinstance(url_keyword, str):
+            logger.error(f"Keyword for '{key}' must be a string.")
+            continue
+
+        # Convert keyword to lowercase for case-insensitive matching
+        url_keyword = url_keyword.lower()
+
+        if not url_keyword:
+            logger.warning(f"No keyword provided for '{key}'. All PDF files will be downloaded.")
+
+        options = {
+            "webdav_hostname": url,
+            "webdav_login": credentials.get("username"),
+            "webdav_password": credentials.get("password"),
+            "verbose": True,
+        }
+
+        try:
+            client = Client(options)
+            client.verify = True  # Set to False to skip SSL verification if needed
+            logger.debug(f"Initialized WebDAV client for '{key}'")
+        except Exception as e:
+            logger.error(f"Failed to initialize WebDAV client for '{key}': {e}")
+            continue
+
+        # Create a directory for the current URL if it doesn't exist
+        download_dir = os.path.join(output_path, key)
+        os.makedirs(download_dir, exist_ok=True)
+        logger.info(f"Download directory for '{key}': {download_dir}")
+
+        try:
+            files = client.list()
+            logger.info(f"Retrieved {len(files)} files from '{key}'")
+        except Exception as e:
+            logger.error(f"Failed to list files for '{key}': {e}")
+            continue
+
+        for file in files:
+            logger.debug(f"Found file: {file}")
+
+        # Download all PDF files that contain the keyword in the filename
+        for file in files:
+            file_lower = file.lower()
+            is_pdf = file_lower.endswith(".pdf")
+            contains_keyword = url_keyword in file_lower if url_keyword else False
+
+            if is_pdf and (contains_keyword or not url_keyword):
+                logger.info(f"Attempting to download file: {file}")
+                if dry_run:
+                    logger.info(f"Dry run enabled. Skipping download of '{file}' to '{os.path.join(download_dir, os.path.basename(file))}'.")
+                    continue
+                try:
+                    remote_path = file
+                    local_filename = os.path.basename(file)
+                    local_path = os.path.join(download_dir, local_filename)
+                    # Ensure the local directory exists
+                    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                    client.download_sync(remote_path=remote_path, local_path=local_path)
+                    logger.info(f"Successfully downloaded '{file}' to '{local_path}'")
+                except Exception as e:
+                    logger.error(f"Failed to download file '{file}' from '{key}': {e}")
+            else:
+                if is_pdf:
+                    logger.info(f"Skipped PDF file (keyword not found): {file}")
+                else:
+                    logger.info(f"Skipped non-PDF file: {file}")
+
+    logger.info("Finished downloading timetables.")
+
+if __name__ == "__main__":
+    try:
+        # Load the configuration
+        config = load_config("config/config.yaml")
+        urls = config.get('urls')
+        credentials = config.get('credentials')
+        keywords = config.get('keywords', {})  # Default to empty dict if not provided
+        dry_run = config.get('dry_run', False)
+
+        if not urls or not credentials:
+            logger.error("Configuration must include 'urls' and 'credentials'.")
+            exit(1)
+
+        if not keywords:
+            logger.warning("No keywords provided. All PDF files from all URLs will be downloaded.")
+
+        sync_timetables(urls, credentials, keywords, dry_run)
+    except Exception as e:
+        logger.exception(f"An unexpected error occurred: {e}")
 
